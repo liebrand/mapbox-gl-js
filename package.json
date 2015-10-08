@@ -11,6 +11,7 @@
   "dependencies": {
     "brfs": "^1.4.0",
     "csscolorparser": "^1.0.2",
+    "earcut": "^2.0.3",
     "envify": "^3.4.0",
     "feature-filter": "^1.0.2",
     "geojson-vt": "^2.1.0",
@@ -37,7 +38,7 @@
     "eslint": "^1.5.0",
     "eslint-config-mourner": "^1.0.0",
     "istanbul": "^0.4.1",
-    "mapbox-gl-test-suite": "mapbox/mapbox-gl-test-suite#96a784f76653f0476f2ce4858bb1fbde3e1e7bf5",
+    "mapbox-gl-test-suite": "mapbox/mapbox-gl-test-suite#ab295077601f9ac75fe3c1ca7bb31f8ba1d0c82f",
     "prova": "^2.1.2",
     "sinon": "^1.15.4",
     "st": "^1.0.0",
