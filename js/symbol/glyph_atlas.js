@@ -137,6 +137,10 @@ GlyphAtlas.prototype.addGlyph = function(id, name, glyph, buffer) {
 
     var rect = this.bin.allocate(packWidth, packHeight);
     if (rect.x < 0) {
+        this.resize();
+        rect = this.bin.allocate(packWidth, packHeight);
+    }
+    if (rect.x < 0) {
         console.warn('glyph bitmap overflow');
         return { glyph: glyph, rect: null };
     }
@@ -157,6 +161,25 @@ GlyphAtlas.prototype.addGlyph = function(id, name, glyph, buffer) {
     this.dirty = true;
 
     return rect;
+};
+
+GlyphAtlas.prototype.resize = function() {
+    var origw = this.width,
+        origh = this.height;
+
+    this.texture = null;
+    this.width *= 2;
+    this.height *= 2;
+    this.bin.resize(this.width, this.height);
+
+    var buf = new ArrayBuffer(this.width * this.height),
+        src, dst;
+    for (var i = 0; i < origh; i++) {
+        src = new Uint8Array(this.data.buffer, origh * i, origw);
+        dst = new Uint8Array(buf, origh * i * 2, origw);
+        dst.set(src);
+    }
+    this.data = new Uint8Array(buf);
 };
 
 GlyphAtlas.prototype.bind = function(gl) {
