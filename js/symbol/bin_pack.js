@@ -14,7 +14,7 @@ function BinPack(width, height) {
     this.shelves = [];
     this.stats = {};
     this.count = function(h) {
-        this.stats[h] = this.stats[h]++ || 1;
+        this.stats[h] = (this.stats[h] | 0) + 1;
     };
 }
 

@@ -167,7 +167,13 @@ GlyphAtlas.prototype.resize = function() {
     var origw = this.width,
         origh = this.height;
 
-    this.texture = null;
+    if (this.texture) {
+        if (this.gl) {
+            this.gl.deleteTexture(this.texture);
+        }
+        this.texture = null;
+    }
+
     this.width *= 2;
     this.height *= 2;
     this.bin.resize(this.width, this.height);

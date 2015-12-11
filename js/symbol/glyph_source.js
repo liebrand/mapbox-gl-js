@@ -28,7 +28,7 @@ GlyphSource.prototype.getSimpleGlyphs = function(fontstack, glyphIDs, uid, callb
         this.stacks[fontstack] = {};
     }
     if (this.atlases[fontstack] === undefined) {
-        this.atlases[fontstack] = new GlyphAtlas(256, 256);
+        this.atlases[fontstack] = new GlyphAtlas(128, 128);
     }
 
     var glyphs = {};
