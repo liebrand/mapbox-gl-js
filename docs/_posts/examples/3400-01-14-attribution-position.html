@@ -1,0 +1,22 @@
+---
+layout: example
+category: example
+title: Change the default position for attribution
+description: Initialize a new attribution control and set its position to <code>top-left</code>.
+---
+<div id='map'></div>
+
+<script>
+var map = new mapboxgl.Map({
+    container: 'map',
+    style: 'mapbox://styles/mapbox/light-v8',
+    center: [-77.04, 38.907],
+    zoom: 11.15,
+    attributionControl: false // Disable the initial attribution
+});
+
+// Add a new attribution control to the map
+map.addControl(new mapboxgl.Attribution({
+    position: 'top-left'
+}));
+</script>
