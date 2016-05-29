@@ -4,7 +4,7 @@ var DOM = require('../../util/dom'),
     Point = require('point-geometry'),
     util = require('../../util/util');
 
-module.exports = DragRotate;
+module.exports = DragRotateHandler;
 
 var inertiaLinearity = 0.25,
     inertiaEasing = util.bezier(0, 0, inertiaLinearity, 1),
@@ -12,30 +12,69 @@ var inertiaLinearity = 0.25,
     inertiaDeceleration = 720; // deg/s^2
 
 
-function DragRotate(map) {
+/**
+ * The `DragRotateHandler` allows a user to rotate the map by clicking and
+ * dragging the cursor while holding the right mouse button or the `ctrl` key.
+ * @class DragRotateHandler
+ */
+function DragRotateHandler(map) {
     this._map = map;
     this._el = map.getCanvasContainer();
 
     util.bindHandlers(this);
 }
 
-DragRotate.prototype = {
-    enable: function () {
-        this._el.addEventListener('mousedown', this._onDown);
+DragRotateHandler.prototype = {
+
+    _enabled: false,
+    _active: false,
+
+    /**
+     * Returns the current enabled/disabled state of the "drag to rotate" interaction.
+     * @returns {boolean} enabled state
+     */
+    isEnabled: function () {
+        return this._enabled;
     },
 
+    /**
+     * Returns true if the "drag to rotate" interaction is currently active, i.e. currently being used.
+     * @returns {boolean} active state
+     */
+    isActive: function () {
+        return this._active;
+    },
+
+    /**
+     * Enable the "drag to rotate" interaction.
+     * @example
+     * map.dragRotate.enable();
+     */
+    enable: function () {
+        if (this.isEnabled()) return;
+        this._el.addEventListener('mousedown', this._onDown);
+        this._enabled = true;
+    },
+
+    /**
+     * Disable the "drag to rotate" interaction.
+     * @example
+     * map.dragRotate.disable();
+     */
     disable: function () {
+        if (!this.isEnabled()) return;
         this._el.removeEventListener('mousedown', this._onDown);
+        this._enabled = false;
     },
 
     _onDown: function (e) {
         if (this._ignoreEvent(e)) return;
-        if (this.active) return;
+        if (this.isActive()) return;
 
         document.addEventListener('mousemove', this._onMove);
         document.addEventListener('mouseup', this._onUp);
 
-        this.active = false;
+        this._active = false;
         this._inertia = [[Date.now(), this._map.getBearing()]];
         this._startPos = this._pos = DOM.mousePos(this._el, e);
         this._center = this._map.transform.centerPoint;  // Center of rotation
@@ -55,8 +94,8 @@ DragRotate.prototype = {
     _onMove: function (e) {
         if (this._ignoreEvent(e)) return;
 
-        if (!this.active) {
-            this.active = true;
+        if (!this.isActive()) {
+            this._active = true;
             this._fireEvent('rotatestart', e);
             this._fireEvent('movestart', e);
         }
@@ -88,9 +127,9 @@ DragRotate.prototype = {
         document.removeEventListener('mousemove', this._onMove);
         document.removeEventListener('mouseup', this._onUp);
 
-        if (!this.active) return;
+        if (!this.isActive()) return;
 
-        this.active = false;
+        this._active = false;
         this._fireEvent('rotateend', e);
         this._drainInertiaBuffer();
 
@@ -100,7 +139,7 @@ DragRotate.prototype = {
 
         var finish = function() {
             if (Math.abs(mapBearing) < map.options.bearingSnap) {
-                map.resetNorth({noMoveStart: true});
+                map.resetNorth({noMoveStart: true}, { originalEvent: e });
             } else {
                 this._fireEvent('moveend', e);
             }
@@ -142,7 +181,7 @@ DragRotate.prototype = {
             duration: duration * 1000,
             easing: inertiaEasing,
             noMoveStart: true
-        });
+        }, { originalEvent: e });
     },
 
     _fireEvent: function (type, e) {
@@ -152,8 +191,8 @@ DragRotate.prototype = {
     _ignoreEvent: function (e) {
         var map = this._map;
 
-        if (map.boxZoom && map.boxZoom.active) return true;
-        if (map.dragPan && map.dragPan.active) return true;
+        if (map.boxZoom && map.boxZoom.isActive()) return true;
+        if (map.dragPan && map.dragPan.isActive()) return true;
         if (e.touches) {
             return (e.touches.length > 1);
         } else {
@@ -166,7 +205,7 @@ DragRotate.prototype = {
     _drainInertiaBuffer: function () {
         var inertia = this._inertia,
             now = Date.now(),
-            cutoff = 50;   //msec
+            cutoff = 160;   //msec
 
         while (inertia.length > 0 && now - inertia[0][0] > cutoff)
             inertia.shift();
@@ -181,8 +220,7 @@ DragRotate.prototype = {
  * @event rotatestart
  * @memberof Map
  * @instance
- * @type {Object}
- * @property {Event} originalEvent the original DOM event
+ * @property {EventData} data Original event data
  */
 
 /**
@@ -191,8 +229,7 @@ DragRotate.prototype = {
  * @event rotate
  * @memberof Map
  * @instance
- * @type {Object}
- * @property {Event} originalEvent the original DOM event
+ * @property {EventData} data Original event data
  */
 
 /**
@@ -201,6 +238,5 @@ DragRotate.prototype = {
  * @event rotateend
  * @memberof Map
  * @instance
- * @type {Object}
- * @property {Event} originalEvent the original DOM event
+ * @property {EventData} data Original event data
  */

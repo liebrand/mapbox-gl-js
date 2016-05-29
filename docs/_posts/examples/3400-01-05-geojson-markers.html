@@ -13,7 +13,7 @@ var map = new mapboxgl.Map({
     zoom: 3
 });
 
-map.on('style.load', function () {
+map.on('load', function () {
     map.addSource("markers", {
         "type": "geojson",
         "data": {
@@ -52,9 +52,6 @@ map.on('style.load', function () {
             "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
             "text-offset": [0, 0.6],
             "text-anchor": "top"
-        },
-        "paint": {
-            "text-size": 12
         }
     });
 });

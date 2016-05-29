@@ -24,7 +24,6 @@ exports._loadTileJSON = function(options) {
 
         this._pyramid = new TilePyramid({
             tileSize: this.tileSize,
-            cacheSize: 20,
             minzoom: this.minzoom,
             maxzoom: this.maxzoom,
             roundZoom: this.roundZoom,
@@ -68,47 +67,80 @@ exports._getVisibleCoordinates = function() {
     else return this._pyramid.renderedIDs().map(TileCoord.fromID);
 };
 
-exports._vectorFeaturesAt = function(coord, params, callback) {
-    if (!this._pyramid)
-        return callback(null, []);
+function sortTilesIn(a, b) {
+    var coordA = a.coord;
+    var coordB = b.coord;
+    return (coordA.z - coordB.z) || (coordA.y - coordB.y) || (coordA.w - coordB.w) || (coordA.x - coordB.x);
+}
 
-    var result = this._pyramid.tileAt(coord);
-    if (!result)
-        return callback(null, []);
+function mergeRenderedFeatureLayers(tiles) {
+    var result = tiles[0] || {};
+    for (var i = 1; i < tiles.length; i++) {
+        var tile = tiles[i];
+        for (var layerID in tile) {
+            var tileFeatures = tile[layerID];
+            var resultFeatures = result[layerID];
+            if (resultFeatures === undefined) {
+                resultFeatures = result[layerID] = tileFeatures;
+            } else {
+                for (var f = 0; f < tileFeatures.length; f++) {
+                    resultFeatures.push(tileFeatures[f]);
+                }
+            }
+        }
+    }
+    return result;
+}
 
-    this.dispatcher.send('query features', {
-        uid: result.tile.uid,
-        x: result.x,
-        y: result.y,
-        tileExtent: result.tile.tileExtent,
-        scale: result.scale,
-        source: this.id,
-        params: params
-    }, callback, result.tile.workerID);
+exports._queryRenderedVectorFeatures = function(queryGeometry, params, zoom, bearing) {
+    if (!this._pyramid || !this.map)
+        return {};
+
+    var tilesIn = this._pyramid.tilesIn(queryGeometry);
+
+    tilesIn.sort(sortTilesIn);
+
+    var styleLayers = this.map.style._layers;
+
+    var renderedFeatureLayers = [];
+    for (var r = 0; r < tilesIn.length; r++) {
+        var tileIn = tilesIn[r];
+        if (!tileIn.tile.featureIndex) continue;
+
+        renderedFeatureLayers.push(tileIn.tile.featureIndex.query({
+            queryGeometry: tileIn.queryGeometry,
+            scale: tileIn.scale,
+            tileSize: tileIn.tile.tileSize,
+            bearing: bearing,
+            params: params
+        }, styleLayers));
+    }
+    return mergeRenderedFeatureLayers(renderedFeatureLayers);
 };
 
+exports._querySourceFeatures = function(params) {
+    if (!this._pyramid) {
+        return [];
+    }
 
-exports._vectorFeaturesIn = function(bounds, params, callback) {
-    if (!this._pyramid)
-        return callback(null, []);
-
-    var results = this._pyramid.tilesIn(bounds);
-    if (!results)
-        return callback(null, []);
-
-    util.asyncAll(results, function queryTile(result, cb) {
-        this.dispatcher.send('query features', {
-            uid: result.tile.uid,
-            source: this.id,
-            minX: result.minX,
-            maxX: result.maxX,
-            minY: result.minY,
-            maxY: result.maxY,
-            params: params
-        }, cb, result.tile.workerID);
-    }.bind(this), function done(err, features) {
-        callback(err, Array.prototype.concat.apply([], features));
+    var pyramid = this._pyramid;
+    var tiles = pyramid.renderedIDs().map(function(id) {
+        return pyramid.getTile(id);
     });
+
+    var result = [];
+
+    var dataTiles = {};
+    for (var i = 0; i < tiles.length; i++) {
+        var tile = tiles[i];
+        var dataID = new TileCoord(Math.min(tile.sourceMaxZoom, tile.coord.z), tile.coord.x, tile.coord.y, 0).id;
+        if (!dataTiles[dataID]) {
+            dataTiles[dataID] = true;
+            tile.querySourceFeatures(result, params);
+        }
+    }
+
+    return result;
 };
 
 /*
@@ -120,7 +152,6 @@ exports._vectorFeaturesIn = function(bounds, params, callback) {
  * @param {Array} options.tiles An array of tile sources. If `url` is not specified, `tiles` can be used instead to specify tile sources, as in the TileJSON spec. Other TileJSON keys such as `minzoom` and `maxzoom` can be specified in a source object if `tiles` is used.
  * @param {string} options.id An optional `id` to assign to the source
  * @param {number} [options.tileSize=512] Optional tile size (width and height in pixels, assuming tiles are square). This option is only configurable for raster sources
- * @param {number} options.cacheSize Optional max number of tiles to cache at any given time
  * @example
  * var sourceObj = new mapboxgl.Source.create({
  *    type: 'vector',
@@ -139,11 +170,24 @@ exports.create = function(source) {
         image: require('./image_source')
     };
 
+    return exports.is(source) ? source : new sources[source.type](source);
+};
+
+exports.is = function(source) {
+    // This is not at file scope in order to avoid a circular require.
+    var sources = {
+        vector: require('./vector_tile_source'),
+        raster: require('./raster_tile_source'),
+        geojson: require('./geojson_source'),
+        video: require('./video_source'),
+        image: require('./image_source')
+    };
+
     for (var type in sources) {
         if (source instanceof sources[type]) {
-            return source;
+            return true;
         }
     }
 
-    return new sources[source.type](source);
+    return false;
 };

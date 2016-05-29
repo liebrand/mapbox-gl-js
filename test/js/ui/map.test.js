@@ -1,10 +1,12 @@
 'use strict';
 
-var test = require('prova');
+var test = require('tap').test;
 var extend = require('../../../js/util/util').extend;
+var window = require('../../../js/util/browser').window;
 var Map = require('../../../js/ui/map');
 var Style = require('../../../js/style/style');
 var LngLat = require('../../../js/geo/lng_lat');
+var sinon = require('sinon');
 
 var fixed = require('../../testutil/fixed');
 var fixedNum = fixed.Num;
@@ -22,14 +24,77 @@ test('Map', function(t) {
                 }
             },
             interactive: false,
-            attributionControl: false
+            attributionControl: false,
+            trackResize: true
         }, options));
     }
 
     t.test('constructor', function(t) {
-        var map = createMap();
+        var map = createMap({interactive: true});
         t.ok(map.getContainer());
+        t.equal(map.getStyle(), undefined);
+        t.ok(map.boxZoom.isEnabled());
+        t.ok(map.doubleClickZoom.isEnabled());
+        t.ok(map.dragPan.isEnabled());
+        t.ok(map.dragRotate.isEnabled());
+        t.ok(map.keyboard.isEnabled());
+        t.ok(map.scrollZoom.isEnabled());
+        t.ok(map.touchZoomRotate.isEnabled());
         t.end();
+    });
+
+    t.test('disables handlers', function(t) {
+        t.test('disables all handlers', function(t) {
+            var map = createMap({interactive: false});
+
+            t.notOk(map.boxZoom.isEnabled());
+            t.notOk(map.doubleClickZoom.isEnabled());
+            t.notOk(map.dragPan.isEnabled());
+            t.notOk(map.dragRotate.isEnabled());
+            t.notOk(map.keyboard.isEnabled());
+            t.notOk(map.scrollZoom.isEnabled());
+            t.notOk(map.touchZoomRotate.isEnabled());
+
+            t.end();
+        });
+
+        var handlerNames = [
+            'scrollZoom',
+            'boxZoom',
+            'dragRotate',
+            'dragPan',
+            'keyboard',
+            'doubleClickZoom',
+            'touchZoomRotate'
+        ];
+        handlerNames.forEach(function(handlerName) {
+            t.test('disables "' + handlerName + '" handler', function(t) {
+                var options = {};
+                options[handlerName] = false;
+                var map = createMap(options);
+
+                t.notOk(map[handlerName].isEnabled());
+
+                t.end();
+            });
+        });
+
+        t.end();
+    });
+
+    t.test('emits load event after a style is set', function(t) {
+        var map = createMap();
+
+        map.on('load', fail);
+
+        setTimeout(function() {
+            map.off('load', fail);
+            map.on('load', pass);
+            map.setStyle(createStyle());
+        }, 1);
+
+        function fail() { t.ok(false); }
+        function pass() { t.end(); }
     });
 
     t.test('#setStyle', function(t) {
@@ -52,32 +117,27 @@ test('Map', function(t) {
                     layers: []
                 });
 
-            function styleEvent(e) {
+            var events = [];
+
+            function checkEvent(e) {
                 t.equal(e.style, style);
+                events.push(e.type);
             }
 
-            function sourceEvent(e) {
-                t.equal(e.style, style);
-            }
-
-            function tileEvent(e) {
-                t.equal(e.style, style);
-            }
-
-            map.on('style.load',    styleEvent);
-            map.on('style.error',   styleEvent);
-            map.on('style.change',  styleEvent);
-            map.on('source.load',   sourceEvent);
-            map.on('source.error',  sourceEvent);
-            map.on('source.change', sourceEvent);
-            map.on('tile.add',      tileEvent);
-            map.on('tile.load',     tileEvent);
-            map.on('tile.error',    tileEvent);
-            map.on('tile.remove',   tileEvent);
+            map.on('style.load',    checkEvent);
+            map.on('style.error',   checkEvent);
+            map.on('style.change',  checkEvent);
+            map.on('source.load',   checkEvent);
+            map.on('source.error',  checkEvent);
+            map.on('source.change', checkEvent);
+            map.on('tile.add',      checkEvent);
+            map.on('tile.error',    checkEvent);
+            map.on('tile.remove',   checkEvent);
 
             map.off('style.error', map.onError);
             map.off('source.error', map.onError);
             map.off('tile.error', map.onError);
+            map.off('layer.error', map.onError);
 
             t.plan(10);
             map.setStyle(style); // Fires load
@@ -87,9 +147,9 @@ test('Map', function(t) {
             style.fire('source.error');
             style.fire('source.change');
             style.fire('tile.add');
-            style.fire('tile.load');
             style.fire('tile.error');
             style.fire('tile.remove');
+            style.fire('layer.error');
         });
 
         t.test('can be called more than once', function(t) {
@@ -108,15 +168,7 @@ test('Map', function(t) {
             map.transform.resize(600, 400);
             t.equal(map.transform.zoom, 0.6983039737971012, 'map transform is constrained');
             t.ok(map.transform.unmodified, 'map transform is not modified');
-            map.setStyle({
-                version: 8,
-                center: [-73.9749, 40.7736],
-                zoom: 12.5,
-                bearing: 29,
-                pitch: 50,
-                sources: {},
-                layers: []
-            });
+            map.setStyle(createStyle());
             map.on('style.load', function () {
                 t.deepEqual(fixedLngLat(map.transform.center), fixedLngLat({ lng: -73.9749, lat: 40.7736 }));
                 t.equal(fixedNum(map.transform.zoom), 12.5);
@@ -129,15 +181,7 @@ test('Map', function(t) {
         t.test('style transform does not override map transform modified via options', function (t) {
             var map = createMap({zoom: 10, center: [-77.0186, 38.8888]});
             t.notOk(map.transform.unmodified, 'map transform is modified by options');
-            map.setStyle({
-                version: 8,
-                center: [-73.9749, 40.7736],
-                zoom: 12.5,
-                bearing: 29,
-                pitch: 50,
-                sources: {},
-                layers: []
-            });
+            map.setStyle(createStyle());
             map.on('style.load', function () {
                 t.deepEqual(fixedLngLat(map.transform.center), fixedLngLat({ lng: -77.0186, lat: 38.8888 }));
                 t.equal(fixedNum(map.transform.zoom), 10);
@@ -153,15 +197,7 @@ test('Map', function(t) {
             map.setZoom(10);
             map.setCenter([-77.0186, 38.8888]);
             t.notOk(map.transform.unmodified, 'map transform is modified via setters');
-            map.setStyle({
-                version: 8,
-                center: [-73.9749, 40.7736],
-                zoom: 12.5,
-                bearing: 29,
-                pitch: 50,
-                sources: {},
-                layers: []
-            });
+            map.setStyle(createStyle());
             map.on('style.load', function () {
                 t.deepEqual(fixedLngLat(map.transform.center), fixedLngLat({ lng: -77.0186, lat: 38.8888 }));
                 t.equal(fixedNum(map.transform.zoom), 10);
@@ -171,6 +207,76 @@ test('Map', function(t) {
             });
         });
 
+        t.end();
+    });
+
+    t.test('#getStyle', function(t) {
+        function createStyle() {
+            return {
+                version: 8,
+                center: [-73.9749, 40.7736],
+                zoom: 12.5,
+                bearing: 29,
+                pitch: 50,
+                sources: {},
+                layers: []
+            };
+        }
+
+        function createStyleSource() {
+            return {
+                type: "geojson",
+                data: {
+                    type: "FeatureCollection",
+                    features: []
+                }
+            };
+        }
+
+        function createStyleLayer() {
+            return {
+                id: 'background',
+                type: 'background'
+            };
+        }
+
+        t.test('returns the style', function(t) {
+            var style = createStyle();
+            var map = createMap({style: style});
+
+            map.on('load', function () {
+                t.deepEqual(map.getStyle(), style);
+                t.end();
+            });
+        });
+
+        t.test('returns the style with added sources', function(t) {
+            var style = createStyle();
+            var map = createMap({style: style});
+
+            map.on('load', function () {
+                map.addSource('geojson', createStyleSource());
+                t.deepEqual(map.getStyle(), extend(createStyle(), {
+                    sources: {geojson: createStyleSource()}
+                }));
+                t.end();
+            });
+        });
+
+        t.test('returns the style with added layers', function(t) {
+            var style = createStyle();
+            var map = createMap({style: style});
+
+            map.on('load', function () {
+                map.addLayer(createStyleLayer());
+                t.deepEqual(map.getStyle(), extend(createStyle(), {
+                    layers: [createStyleLayer()]
+                }));
+                t.end();
+            });
+        });
+
+        t.end();
     });
 
     t.test('#resize', function(t) {
@@ -203,12 +309,169 @@ test('Map', function(t) {
 
             t.end();
         });
+
+
+        t.test('listen to window resize event', function (t) {
+            window.addEventListener = function(type) {
+                if (type === 'resize') {
+                    //restore empty function not to mess with other tests
+                    window.addEventListener = function() {};
+
+                    t.end();
+                }
+            };
+
+            createMap();
+        });
+
+        t.test('do not resize if trackResize is false', function (t) {
+            var map = createMap({trackResize: false});
+
+            sinon.spy(map, 'stop');
+            sinon.spy(map, '_update');
+            sinon.spy(map, 'resize');
+
+            map._onWindowResize();
+
+            t.notOk(map.stop.called);
+            t.notOk(map._update.called);
+            t.notOk(map.resize.called);
+
+            t.end();
+        });
+
+        t.test('do resize if trackResize is true (default)', function (t) {
+            var map = createMap();
+
+            sinon.spy(map, 'stop');
+            sinon.spy(map, '_update');
+            sinon.spy(map, 'resize');
+
+            map._onWindowResize();
+
+            t.ok(map.stop.called);
+            t.ok(map._update.called);
+            t.ok(map.resize.called);
+
+            t.end();
+        });
+
+        t.end();
     });
 
     t.test('#getBounds', function(t) {
-        var map = createMap();
+        var map = createMap({ zoom: 0 });
         t.deepEqual(parseFloat(map.getBounds().getCenter().lng.toFixed(10)), 0, 'getBounds');
         t.deepEqual(parseFloat(map.getBounds().getCenter().lat.toFixed(10)), 0, 'getBounds');
+
+        t.deepEqual(toFixed(map.getBounds().toArray()), toFixed([
+            [ -70.31249999999976, -57.32652122521695 ],
+            [ 70.31249999999977, 57.326521225216965 ] ]));
+
+        t.test('rotated bounds', function(t) {
+            var map = createMap({ zoom: 1, bearing: 45 });
+            t.deepEqual(toFixed(map.getBounds().toArray()), toFixed([
+                [ -49.718445552178764, -44.44541580601936 ],
+                [ 49.71844555217925, 44.445415806019355 ] ]));
+            t.end();
+        });
+        t.end();
+
+        function toFixed(bounds) {
+            var n = 10;
+            return [
+                [bounds[0][0].toFixed(n), bounds[0][1].toFixed(n)],
+                [bounds[1][0].toFixed(n), bounds[1][1].toFixed(n)]
+            ];
+        }
+    });
+
+    t.test('#setMaxBounds', function (t) {
+        t.test('constrains map bounds', function (t) {
+            var map = createMap({zoom:0});
+            map.setMaxBounds([[-130.4297, 50.0642], [-61.52344, 24.20688]]);
+            t.deepEqual(toFixed(map.getBounds().toArray()), toFixed([
+                [-112.5000192114, 24.2068800000],
+                [-79.4531207886, 50.0642000000]]));
+            t.end();
+        });
+
+        t.test('when no argument is passed, map bounds constraints are removed', function (t) {
+            var map = createMap({zoom:0});
+            map.setMaxBounds([[-130.4297, 50.0642], [-61.52344, 24.20688]]);
+            t.deepEqual(toFixed(map.setMaxBounds(null).setZoom(0).getBounds().toArray()), toFixed([
+                [-166.28906999999964, -27.683527055417144],
+                [-25.664070000000066, 73.8248206696509]]));
+            t.end();
+        });
+
+        t.test('should not zoom out farther than bounds', function (t) {
+            var map = createMap();
+            map.setMaxBounds([[-130.4297, 50.0642], [-61.52344, 24.20688]]);
+            t.notEqual(map.setZoom(0).getZoom(), 0);
+            t.end();
+        });
+
+        function toFixed(bounds) {
+            var n = 10;
+            return [
+                [bounds[0][0].toFixed(n), bounds[0][1].toFixed(n)],
+                [bounds[1][0].toFixed(n), bounds[1][1].toFixed(n)]
+            ];
+        }
+
+        t.end();
+    });
+
+    t.test('#setMinZoom', function(t) {
+        var map = createMap({zoom:5});
+        map.setMinZoom(3.5);
+        map.setZoom(1);
+        t.equal(map.getZoom(), 3.5);
+        t.end();
+    });
+
+    t.test('unset minZoom', function(t) {
+        var map = createMap({minZoom:5});
+        map.setMinZoom(null);
+        map.setZoom(1);
+        t.equal(map.getZoom(), 1);
+        t.end();
+    });
+
+    t.test('ignore minZooms over maxZoom', function(t) {
+        var map = createMap({zoom:2, maxZoom:5});
+        t.throws(function() {
+            map.setMinZoom(6);
+        });
+        map.setZoom(0);
+        t.equal(map.getZoom(), 0);
+        t.end();
+    });
+
+    t.test('#setMaxZoom', function (t) {
+        var map = createMap({zoom:0});
+        map.setMaxZoom(3.5);
+        map.setZoom(4);
+        t.equal(map.getZoom(), 3.5);
+        t.end();
+    });
+
+    t.test('unset maxZoom', function(t) {
+        var map = createMap({maxZoom:5});
+        map.setMaxZoom(null);
+        map.setZoom(6);
+        t.equal(map.getZoom(), 6);
+        t.end();
+    });
+
+    t.test('ignore maxZooms over minZoom', function(t) {
+        var map = createMap({minZoom:5});
+        t.throws(function() {
+            map.setMaxZoom(4);
+        });
+        map.setZoom(5);
+        t.equal(map.getZoom(), 5);
         t.end();
     });
 
@@ -292,25 +555,7 @@ test('Map', function(t) {
         t.end();
     });
 
-    t.test('#batch', function(t) {
-        var map = createMap();
-        map.setStyle({
-            version: 8,
-            sources: {},
-            layers: []
-        });
-        map.on('style.load', function() {
-            map.batch(function(batch) {
-                batch.addLayer({ id: 'background', type: 'background' });
-            });
-            t.ok(map.getLayer('background'), 'has background');
-
-            t.end();
-        });
-    });
-
-
-    t.test('#featuresAt', function(t) {
+    t.test('#queryRenderedFeatures', function(t) {
         var map = createMap();
         map.setStyle({
             "version": 8,
@@ -319,35 +564,35 @@ test('Map', function(t) {
         });
 
         map.on('style.load', function() {
-            var callback = function () {};
             var opts = {};
 
             t.test('normal coords', function(t) {
-                map.style.featuresAt = function (coords, o, cb) {
-                    t.deepEqual(coords, { column: 0.5, row: 0.5, zoom: 0 });
+                map.style.queryRenderedFeatures = function (coords, o, zoom, bearing) {
+                    t.deepEqual(coords, [{ column: 0.5, row: 0.5, zoom: 0 }]);
                     t.equal(o, opts);
-                    t.equal(cb, callback);
-
+                    t.equal(bearing, map.transform.angle);
+                    t.equal(zoom, map.getZoom());
                     t.end();
                 };
 
-                map.featuresAt(map.project(new LngLat(0, 0)), opts, callback);
+                map.queryRenderedFeatures(map.project(new LngLat(0, 0)), opts);
             });
 
-            t.test('wraps coords', function(t) {
-                map.style.featuresAt = function (coords, o, cb) {
+            t.test('does not wrap coords', function(t) {
+                map.style.queryRenderedFeatures = function (coords, o, zoom, bearing) {
                     // avoid floating point issues
-                    t.equal(parseFloat(coords.column.toFixed(4)), 0.5);
-                    t.equal(coords.row, 0.5);
-                    t.equal(coords.zoom, 0);
+                    t.equal(parseFloat(coords[0].column.toFixed(4)), 1.5);
+                    t.equal(coords[0].row, 0.5);
+                    t.equal(coords[0].zoom, 0);
 
                     t.equal(o, opts);
-                    t.equal(cb, callback);
+                    t.equal(bearing, map.transform.angle);
+                    t.equal(zoom, map.getZoom());
 
                     t.end();
                 };
 
-                map.featuresAt(map.project(new LngLat(360, 0)), opts, callback);
+                map.queryRenderedFeatures(map.project(new LngLat(360, 0)), opts);
             });
 
             t.end();
@@ -380,7 +625,53 @@ test('Map', function(t) {
             });
 
             map.on('style.load', function () {
+                map.style.dispatcher.broadcast = function(key, value) {
+                    t.equal(key, 'update layers');
+                    t.deepEqual(value.map(function(layer) { return layer.id; }), ['symbol']);
+                };
+
                 map.setLayoutProperty('symbol', 'text-transform', 'lowercase');
+                map.style.update();
+                t.deepEqual(map.getLayoutProperty('symbol', 'text-transform'), 'lowercase');
+                t.end();
+            });
+        });
+
+        t.test('sets property on parent layer', function (t) {
+            var map = createMap({
+                style: {
+                    "version": 8,
+                    "sources": {
+                        "geojson": {
+                            "type": "geojson",
+                            "data": {
+                                "type": "FeatureCollection",
+                                "features": []
+                            }
+                        }
+                    },
+                    "layers": [{
+                        "id": "symbol",
+                        "type": "symbol",
+                        "source": "geojson",
+                        "layout": {
+                            "text-transform": "uppercase"
+                        }
+                    }, {
+                        "id": "symbol-ref",
+                        "ref": "symbol"
+                    }]
+                }
+            });
+
+            map.on('style.load', function () {
+                map.style.dispatcher.broadcast = function(key, value) {
+                    t.equal(key, 'update layers');
+                    t.deepEqual(value.map(function(layer) { return layer.id; }), ['symbol']);
+                };
+
+                map.setLayoutProperty('symbol-ref', 'text-transform', 'lowercase');
+                map.style.update();
                 t.deepEqual(map.getLayoutProperty('symbol', 'text-transform'), 'lowercase');
                 t.end();
             });
@@ -489,7 +780,7 @@ test('Map', function(t) {
                     "sources": {
                         "drone": {
                             "type": "video",
-                            "urls": ["https://www.mapbox.com/drone/video/drone.mp4", "https://www.mapbox.com/drone/video/drone.webm"],
+                            "urls": [],
                             "coordinates": [
                                 [-122.51596391201019, 37.56238816766053],
                                 [-122.51467645168304, 37.56410183312965],
@@ -523,7 +814,7 @@ test('Map', function(t) {
                     "sources": {
                         "image": {
                             "type": "image",
-                            "url": "https://www.mapbox.com/drone/video/drone.mp4",
+                            "url": "",
                             "coordinates": [
                                 [-122.51596391201019, 37.56238816766053],
                                 [-122.51467645168304, 37.56410183312965],
@@ -549,6 +840,8 @@ test('Map', function(t) {
                 t.end();
             });
         });
+
+        t.end();
     });
 
     t.test('#setPaintProperty', function (t) {
@@ -566,7 +859,7 @@ test('Map', function(t) {
 
             map.on('style.load', function () {
                 map.setPaintProperty('background', 'background-color', 'red');
-                t.deepEqual(map.getPaintProperty('background', 'background-color'), [1, 0, 0, 1]);
+                t.deepEqual(map.getPaintProperty('background', 'background-color'), 'red');
                 t.end();
             });
         });
@@ -586,6 +879,8 @@ test('Map', function(t) {
 
             t.end();
         });
+
+        t.end();
     });
 
     t.test('#onError', function (t) {
@@ -606,5 +901,46 @@ test('Map', function(t) {
                 }
             });
         });
+
+        t.test('logs errors that happen during render', function (t) {
+            var error = console.error;
+
+            console.error = function (e) {
+                console.error = error;
+                t.deepEqual(e.message, 'in render');
+                t.end();
+            };
+
+            var map = createMap({
+                style: {
+                    version: 8,
+                    sources: {},
+                    layers: []
+                }
+            });
+
+            map.on('render', function () {
+                throw new Error('in render');
+            });
+
+            map._rerender = function () {};
+            map._render();
+        });
+
+        t.end();
     });
+
+    t.end();
 });
+
+function createStyle() {
+    return {
+        version: 8,
+        center: [-73.9749, 40.7736],
+        zoom: 12.5,
+        bearing: 29,
+        pitch: 50,
+        sources: {},
+        layers: []
+    };
+}

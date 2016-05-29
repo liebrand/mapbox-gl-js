@@ -54,15 +54,19 @@ exports.ease = exports.bezier(0.25, 0.1, 0.25, 1);
  * RGBA, return a version for which the RGB components are multiplied
  * by the A (alpha) component
  *
- * @param {Array<number>} c color array
+ * @param {Array<number>} color color array
  * @returns {Array<number>} premultiplied color array
  * @private
  */
-exports.premultiply = function (c) {
-    c[0] *= c[3];
-    c[1] *= c[3];
-    c[2] *= c[3];
-    return c;
+exports.premultiply = function (color) {
+    if (!color) return null;
+    var opacity = color[3];
+    return [
+        color[0] * opacity,
+        color[1] * opacity,
+        color[2] * opacity,
+        opacity
+    ];
 };
 
 /**
@@ -239,43 +243,6 @@ exports.uniqueId = function () {
 };
 
 /**
- * Create a version of `fn` that only fires once every `time` millseconds.
- *
- * @param {Function} fn the function to be throttled
- * @param {number} time millseconds required between function calls
- * @param {*} context the value of `this` with which the function is called
- * @returns {Function} debounced function
- * @private
- */
-exports.throttle = function (fn, time, context) {
-    var lock, args, wrapperFn, later;
-
-    later = function () {
-        // reset lock and call if queued
-        lock = false;
-        if (args) {
-            wrapperFn.apply(context, args);
-            args = false;
-        }
-    };
-
-    wrapperFn = function () {
-        if (lock) {
-            // called too soon, queue to call later
-            args = arguments;
-
-        } else {
-            // call and lock until later
-            fn.apply(context, arguments);
-            setTimeout(later, time);
-            lock = true;
-        }
-    };
-
-    return wrapperFn;
-};
-
-/**
  * Create a version of `fn` that is only called `time` milliseconds
  * after its last invocation
  *
@@ -384,4 +351,126 @@ exports.getCoordinatesCenter = function(coords) {
     var dMax = Math.max(dx, dy);
     return new Coordinate((minX + maxX) / 2, (minY + maxY) / 2, 0)
         .zoomTo(Math.floor(-Math.log(dMax) / Math.LN2));
+};
+
+/**
+ * Determine if a string ends with a particular substring
+ * @param {string} string
+ * @param {string} suffix
+ * @returns {boolean}
+ * @private
+ */
+exports.endsWith = function(string, suffix) {
+    return string.indexOf(suffix, string.length - suffix.length) !== -1;
+};
+
+/**
+ * Determine if a string starts with a particular substring
+ * @param {string} string
+ * @param {string} prefix
+ * @returns {boolean}
+ * @private
+ */
+exports.startsWith = function(string, prefix) {
+    return string.indexOf(prefix) === 0;
+};
+
+/**
+ * Create an object by mapping all the values of an existing object while
+ * preserving their keys.
+ * @param {Object} input
+ * @param {Function} iterator
+ * @returns {Object}
+ * @private
+ */
+exports.mapObject = function(input, iterator, context) {
+    var output = {};
+    for (var key in input) {
+        output[key] = iterator.call(context || this, input[key], key, input);
+    }
+    return output;
+};
+
+/**
+ * Create an object by filtering out values of an existing object
+ * @param {Object} input
+ * @param {Function} iterator
+ * @returns {Object}
+ * @private
+ */
+exports.filterObject = function(input, iterator, context) {
+    var output = {};
+    for (var key in input) {
+        if (iterator.call(context || this, input[key], key, input)) {
+            output[key] = input[key];
+        }
+    }
+    return output;
+};
+
+/**
+ * Deeply compares two object literals.
+ * @param {Object} obj1
+ * @param {Object} obj2
+ * @returns {boolean}
+ * @private
+ */
+exports.deepEqual = function deepEqual(a, b) {
+    if (Array.isArray(a)) {
+        if (!Array.isArray(b) || a.length !== b.length) return false;
+        for (var i = 0; i < a.length; i++) {
+            if (!deepEqual(a[i], b[i])) return false;
+        }
+        return true;
+    }
+    if (typeof a === 'object') {
+        if (!(typeof b === 'object')) return false;
+        var keys = Object.keys(a);
+        if (keys.length !== Object.keys(b).length) return false;
+        for (var key in a) {
+            if (!deepEqual(a[key], b[key])) return false;
+        }
+        return true;
+    }
+    return a === b;
+};
+
+/**
+ * Deeply clones two objects.
+ * @param {Object} obj1
+ * @param {Object} obj2
+ * @returns {boolean}
+ * @private
+ */
+exports.clone = function deepEqual(input) {
+    if (Array.isArray(input)) {
+        return input.map(exports.clone);
+    } else if (typeof input === 'object') {
+        return exports.mapObject(input, exports.clone);
+    } else {
+        return input;
+    }
+};
+
+/**
+ * Check if two arrays have at least one common element.
+ * @param {Array} a
+ * @param {Array} b
+ * @returns {boolean}
+ * @private
+ */
+exports.arraysIntersect = function(a, b) {
+    for (var l = 0; l < a.length; l++) {
+        if (b.indexOf(a[l]) >= 0) return true;
+    }
+    return false;
+};
+
+var warnOnceHistory = {};
+exports.warnOnce = function(message) {
+    if (!warnOnceHistory[message]) {
+        // console isn't defined in some WebWorkers, see #2558
+        if (typeof console !== "undefined") console.warn(message);
+        warnOnceHistory[message] = true;
+    }
 };

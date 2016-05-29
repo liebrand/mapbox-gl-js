@@ -4,10 +4,14 @@ var DOM = require('../../util/dom'),
     LngLatBounds = require('../../geo/lng_lat_bounds'),
     util = require('../../util/util');
 
-module.exports = BoxZoom;
+module.exports = BoxZoomHandler;
 
-
-function BoxZoom(map) {
+/**
+ * The `BoxZoomHandler` allows a user to zoom the map to fit a bounding box.
+ * The bounding box is defined by holding `shift` while dragging the cursor.
+ * @class BoxZoomHandler
+ */
+function BoxZoomHandler(map) {
     this._map = map;
     this._el = map.getCanvasContainer();
     this._container = map.getContainer();
@@ -15,13 +19,47 @@ function BoxZoom(map) {
     util.bindHandlers(this);
 }
 
-BoxZoom.prototype = {
-    enable: function () {
-        this._el.addEventListener('mousedown', this._onMouseDown, false);
+BoxZoomHandler.prototype = {
+
+    _enabled: false,
+    _active: false,
+
+    /**
+     * Returns the current enabled/disabled state of the "box zoom" interaction.
+     * @returns {boolean} enabled state
+     */
+    isEnabled: function () {
+        return this._enabled;
     },
 
+    /**
+     * Returns true if the "box zoom" interaction is currently active, i.e. currently being used.
+     * @returns {boolean} active state
+     */
+    isActive: function () {
+        return this._active;
+    },
+
+    /**
+     * Enable the "box zoom" interaction.
+     * @example
+     *   map.boxZoom.enable();
+     */
+    enable: function () {
+        if (this.isEnabled()) return;
+        this._el.addEventListener('mousedown', this._onMouseDown, false);
+        this._enabled = true;
+    },
+
+    /**
+     * Disable the "box zoom" interaction.
+     * @example
+     *   map.boxZoom.disable();
+     */
     disable: function () {
+        if (!this.isEnabled()) return;
         this._el.removeEventListener('mousedown', this._onMouseDown);
+        this._enabled = false;
     },
 
     _onMouseDown: function (e) {
@@ -31,8 +69,9 @@ BoxZoom.prototype = {
         document.addEventListener('keydown', this._onKeyDown, false);
         document.addEventListener('mouseup', this._onMouseUp, false);
 
+        DOM.disableDrag();
         this._startPos = DOM.mousePos(this._el, e);
-        this.active = true;
+        this._active = true;
     },
 
     _onMouseMove: function (e) {
@@ -42,9 +81,6 @@ BoxZoom.prototype = {
         if (!this._box) {
             this._box = DOM.create('div', 'mapboxgl-boxzoom', this._container);
             this._container.classList.add('mapboxgl-crosshair');
-
-            DOM.disableDrag();
-
             this._fireEvent('boxzoomstart', e);
         }
 
@@ -85,7 +121,7 @@ BoxZoom.prototype = {
     },
 
     _finish: function () {
-        this.active = false;
+        this._active = false;
 
         document.removeEventListener('mousemove', this._onMouseMove, false);
         document.removeEventListener('keydown', this._onKeyDown, false);
@@ -106,14 +142,14 @@ BoxZoom.prototype = {
     }
 };
 
+
 /**
  * Boxzoom start event. This event is emitted at the start of a box zoom interaction.
  *
  * @event boxzoomstart
  * @memberof Map
  * @instance
- * @type {Object}
- * @property {Event} originalEvent the original DOM event
+ * @property {EventData} data Original event data
  */
 
 /**
@@ -134,6 +170,5 @@ BoxZoom.prototype = {
  * @event boxzoomcancel
  * @memberof Map
  * @instance
- * @type {Object}
- * @property {Event} originalEvent the original DOM event
+ * @property {EventData} data Original event data
  */

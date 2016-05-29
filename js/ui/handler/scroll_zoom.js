@@ -4,7 +4,7 @@ var DOM = require('../../util/dom'),
     browser = require('../../util/browser'),
     util = require('../../util/util');
 
-module.exports = ScrollZoom;
+module.exports = ScrollZoomHandler;
 
 
 var ua = typeof navigator !== 'undefined' ? navigator.userAgent.toLowerCase() : '',
@@ -12,22 +12,51 @@ var ua = typeof navigator !== 'undefined' ? navigator.userAgent.toLowerCase() : 
     safari = ua.indexOf('safari') !== -1 && ua.indexOf('chrom') === -1;
 
 
-function ScrollZoom(map) {
+/**
+ * The `ScrollZoomHandler` allows a user to zoom the map by scrolling.
+ * @class ScrollZoomHandler
+ */
+function ScrollZoomHandler(map) {
     this._map = map;
     this._el = map.getCanvasContainer();
 
     util.bindHandlers(this);
 }
 
-ScrollZoom.prototype = {
-    enable: function () {
-        this._el.addEventListener('wheel', this._onWheel, false);
-        this._el.addEventListener('mousewheel', this._onWheel, false);
+ScrollZoomHandler.prototype = {
+
+    _enabled: false,
+
+    /**
+     * Returns the current enabled/disabled state of the "scroll to zoom" interaction.
+     * @returns {boolean} enabled state
+     */
+    isEnabled: function () {
+        return this._enabled;
     },
 
+    /**
+     * Enable the "scroll to zoom" interaction.
+     * @example
+     *   map.scrollZoom.enable();
+     */
+    enable: function () {
+        if (this.isEnabled()) return;
+        this._el.addEventListener('wheel', this._onWheel, false);
+        this._el.addEventListener('mousewheel', this._onWheel, false);
+        this._enabled = true;
+    },
+
+    /**
+     * Disable the "scroll to zoom" interaction.
+     * @example
+     *   map.scrollZoom.disable();
+     */
     disable: function () {
+        if (!this.isEnabled()) return;
         this._el.removeEventListener('wheel', this._onWheel);
         this._el.removeEventListener('mousewheel', this._onWheel);
+        this._enabled = false;
     },
 
     _onWheel: function (e) {
@@ -44,7 +73,7 @@ ScrollZoom.prototype = {
             if (safari) value = value / 3;
         }
 
-        var now = (window.performance || Date).now(),
+        var now = browser.now(),
             timeDelta = now - (this._time || 0);
 
         this._pos = DOM.mousePos(this._el, e);
@@ -86,7 +115,7 @@ ScrollZoom.prototype = {
         if (e.shiftKey && value) value = value / 4;
 
         // Only fire the callback if we actually know what type of scrolling device the user uses.
-        if (this._type) this._zoom(-value);
+        if (this._type) this._zoom(-value, e);
 
         e.preventDefault();
     },
@@ -96,7 +125,8 @@ ScrollZoom.prototype = {
         this._zoom(-this._lastValue);
     },
 
-    _zoom: function (delta) {
+    _zoom: function (delta, e) {
+        if (delta === 0) return;
         var map = this._map;
 
         // Scale by sigmoid of scroll wheel delta.
@@ -108,7 +138,39 @@ ScrollZoom.prototype = {
 
         map.zoomTo(targetZoom, {
             duration: 0,
-            around: map.unproject(this._pos)
-        });
+            around: map.unproject(this._pos),
+            delayEndEvents: 200
+        }, { originalEvent: e });
     }
 };
+
+
+/**
+ * Zoom start event. This event is emitted just before the map begins a transition from one
+ * zoom level to another, either as a result of user interaction or the use of methods such as `Map#jumpTo`.
+ *
+ * @event zoomstart
+ * @memberof Map
+ * @instance
+ * @property {EventData} data Original event data, if fired interactively
+ */
+
+/**
+ * Zoom event. This event is emitted repeatedly during animated transitions from one zoom level to
+ * another, either as a result of user interaction or the use of methods such as `Map#jumpTo`.
+ *
+ * @event zoom
+ * @memberof Map
+ * @instance
+ * @property {EventData} data Original event data, if fired interactively
+ */
+
+/**
+ * Zoom end event. This event is emitted just after the map completes a transition from one
+ * zoom level to another, either as a result of user interaction or the use of methods such as `Map#jumpTo`.
+ *
+ * @event zoomend
+ * @memberof Map
+ * @instance
+ * @property {EventData} data Original event data, if fired interactively
+ */

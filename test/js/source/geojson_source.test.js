@@ -1,6 +1,6 @@
 'use strict';
 
-var test = require('prova');
+var test = require('tap').test;
 var GeoJSONSource = require('../../../js/source/geojson_source');
 var Transform = require('../../../js/geo/transform');
 var LngLat = require('../../../js/geo/lng_lat');
@@ -53,6 +53,8 @@ test('GeoJSONSource#setData', function(t) {
         });
         source.setData({});
     });
+
+    t.end();
 });
 
 test('GeoJSONSource#reload', function(t) {
@@ -72,7 +74,10 @@ test('GeoJSONSource#reload', function(t) {
 test('GeoJSONSource#update', function(t) {
     var transform = new Transform();
     transform.resize(200, 200);
-    transform.setZoomAround(15, LngLat.convert([-122.486052, 37.830348]));
+    var lngLat = LngLat.convert([-122.486052, 37.830348]);
+    var point = transform.locationPoint(lngLat);
+    transform.zoom = 15;
+    transform.setLocationAtPoint(lngLat, point);
 
     t.test('sends parse request to dispatcher', function(t) {
         var source = new GeoJSONSource({data: {}});
@@ -91,17 +96,18 @@ test('GeoJSONSource#update', function(t) {
         var source = new GeoJSONSource({
             data: {},
             maxzoom: 10,
-            tolerance: 2,
-            buffer: 128
+            tolerance: 0.25,
+            buffer: 16
         });
 
         source.dispatcher = {
             send: function(message, params) {
                 t.equal(message, 'parse geojson');
                 t.deepEqual(params.geojsonVtOptions, {
+                    extent: 8192,
                     maxZoom: 10,
-                    tolerance: 2,
-                    buffer: 128
+                    tolerance: 4,
+                    buffer: 256
                 });
                 t.end();
             }
@@ -163,9 +169,6 @@ test('GeoJSONSource#update', function(t) {
         source.map.transform.resize(512, 512);
 
         source.style = {};
-        source.glyphAtlas = {
-            removeGlyphs: function() {}
-        };
 
         source.update(transform);
 
@@ -181,4 +184,48 @@ test('GeoJSONSource#update', function(t) {
             });
         });
     });
+
+    t.end();
+});
+
+test('GeoJSONSource#serialize', function(t) {
+
+    t.test('serialize source with inline data', function(t) {
+        var source = new GeoJSONSource({data: hawkHill});
+        t.deepEqual(source.serialize(), {
+            type: 'geojson',
+            data: hawkHill
+        });
+        t.end();
+    });
+
+    t.test('serialize source with url', function(t) {
+        var source = new GeoJSONSource({data: 'local://data.json'});
+        t.deepEqual(source.serialize(), {
+            type: 'geojson',
+            data: 'local://data.json'
+        });
+        t.end();
+    });
+
+    t.test('serialize source with updated data', function(t) {
+        var source = new GeoJSONSource({data: {}});
+        source.setData(hawkHill);
+        t.deepEqual(source.serialize(), {
+            type: 'geojson',
+            data: hawkHill
+        });
+        t.end();
+    });
+
+    t.end();
+});
+
+test('GeoJSONSource#queryRenderedFeatures', function(t) {
+    t.test('returns an empty object before loaded', function(t) {
+        var source = new GeoJSONSource({data: {}});
+        t.deepEqual(source.queryRenderedFeatures(), {});
+        t.end();
+    });
+    t.end();
 });

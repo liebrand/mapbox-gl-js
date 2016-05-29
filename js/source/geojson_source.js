@@ -5,6 +5,7 @@ var Evented = require('../util/evented');
 var TilePyramid = require('./tile_pyramid');
 var Source = require('./source');
 var urlResolve = require('resolve-url');
+var EXTENT = require('../data/bucket').EXTENT;
 
 module.exports = GeoJSONSource;
 
@@ -13,9 +14,13 @@ module.exports = GeoJSONSource;
  * @class GeoJSONSource
  * @param {Object} [options]
  * @param {Object|string} options.data A GeoJSON data object or URL to it. The latter is preferable in case of large GeoJSON files.
- * @param {number} [options.maxzoom=14] Maximum zoom to preserve detail at.
- * @param {number} [options.buffer] Tile buffer on each side.
- * @param {number} [options.tolerance] Simplification tolerance (higher means simpler).
+ * @param {number} [options.maxzoom=18] Maximum zoom to preserve detail at.
+ * @param {number} [options.buffer] Tile buffer on each side in pixels.
+ * @param {number} [options.tolerance] Simplification tolerance (higher means simpler) in pixels.
+ * @param {number} [options.cluster] If the data is a collection of point features, setting this to true clusters the points by radius into groups.
+ * @param {number} [options.clusterRadius=50] Radius of each cluster when clustering points, in pixels.
+ * @param {number} [options.clusterMaxZoom] Max zoom to cluster points on. Defaults to one zoom less than `maxzoom` (so that last zoom features are not clustered).
+
  * @example
  * var sourceObj = new mapboxgl.GeoJSONSource({
  *    data: {
@@ -42,15 +47,28 @@ function GeoJSONSource(options) {
 
     if (options.maxzoom !== undefined) this.maxzoom = options.maxzoom;
 
-    this.geojsonVtOptions = { maxZoom: this.maxzoom };
-    if (options.buffer !== undefined) this.geojsonVtOptions.buffer = options.buffer;
-    if (options.tolerance !== undefined) this.geojsonVtOptions.tolerance = options.tolerance;
+    var scale = EXTENT / this.tileSize;
+
+    this.geojsonVtOptions = {
+        buffer: (options.buffer !== undefined ? options.buffer : 128) * scale,
+        tolerance: (options.tolerance !== undefined ? options.tolerance : 0.375) * scale,
+        extent: EXTENT,
+        maxZoom: this.maxzoom
+    };
+
+    this.cluster = options.cluster || false;
+    this.superclusterOptions = {
+        maxZoom: Math.min(options.clusterMaxZoom, this.maxzoom - 1) || (this.maxzoom - 1),
+        extent: EXTENT,
+        radius: (options.clusterRadius || 50) * scale,
+        log: false
+    };
 
     this._pyramid = new TilePyramid({
-        tileSize: 512,
+        tileSize: this.tileSize,
         minzoom: this.minzoom,
         maxzoom: this.maxzoom,
-        cacheSize: 20,
+        reparseOverscaled: true,
         load: this._loadTile.bind(this),
         abort: this._abortTile.bind(this),
         unload: this._unloadTile.bind(this),
@@ -62,7 +80,8 @@ function GeoJSONSource(options) {
 
 GeoJSONSource.prototype = util.inherit(Evented, /** @lends GeoJSONSource.prototype */{
     minzoom: 0,
-    maxzoom: 14,
+    maxzoom: 18,
+    tileSize: 512,
     _dirty: true,
     isTileClipped: true,
 
@@ -108,24 +127,36 @@ GeoJSONSource.prototype = util.inherit(Evented, /** @lends GeoJSONSource.prototy
         }
     },
 
+    serialize: function() {
+        return {
+            type: 'geojson',
+            data: this._data
+        };
+    },
+
     getVisibleCoordinates: Source._getVisibleCoordinates,
     getTile: Source._getTile,
 
-    featuresAt: Source._vectorFeaturesAt,
-    featuresIn: Source._vectorFeaturesIn,
+    queryRenderedFeatures: Source._queryRenderedVectorFeatures,
+    querySourceFeatures: Source._querySourceFeatures,
 
     _updateData: function() {
         this._dirty = false;
-        var data = this._data;
-        if (typeof data === 'string' && typeof window != 'undefined') {
-            data = urlResolve(window.location.href, data);
-        }
-        this.workerID = this.dispatcher.send('parse geojson', {
-            data: data,
-            tileSize: 512,
+        var options = {
+            tileSize: this.tileSize,
             source: this.id,
-            geojsonVtOptions: this.geojsonVtOptions
-        }, function(err) {
+            geojsonVtOptions: this.geojsonVtOptions,
+            cluster: this.cluster,
+            superclusterOptions: this.superclusterOptions
+        };
+
+        var data = this._data;
+        if (typeof data === 'string') {
+            options.url = typeof window != 'undefined' ? urlResolve(window.location.href, data) : data;
+        } else {
+            options.data = JSON.stringify(data);
+        }
+        this.workerID = this.dispatcher.send('parse geojson', options, function(err) {
             this._loaded = true;
             if (err) {
                 this.fire('error', {error: err});
@@ -144,12 +175,12 @@ GeoJSONSource.prototype = util.inherit(Evented, /** @lends GeoJSONSource.prototy
             coord: tile.coord,
             zoom: tile.coord.z,
             maxZoom: this.maxzoom,
-            tileSize: 512,
+            tileSize: this.tileSize,
             source: this.id,
             overscaling: overscaling,
             angle: this.map.transform.angle,
             pitch: this.map.transform.pitch,
-            collisionDebug: this.map.collisionDebug
+            showCollisionBoxes: this.map.showCollisionBoxes
         };
 
         tile.workerID = this.dispatcher.send('load geojson tile', params, function(err, data) {
@@ -164,7 +195,7 @@ GeoJSONSource.prototype = util.inherit(Evented, /** @lends GeoJSONSource.prototy
                 return;
             }
 
-            tile.loadVectorData(data);
+            tile.loadVectorData(data, this.map.style);
 
             if (tile.redoWhenDone) {
                 tile.redoWhenDone = false;
@@ -190,7 +221,6 @@ GeoJSONSource.prototype = util.inherit(Evented, /** @lends GeoJSONSource.prototy
 
     _unloadTile: function(tile) {
         tile.unloadVectorData(this.map.painter);
-        this.glyphAtlas.removeGlyphs(tile.uid);
         this.dispatcher.send('remove tile', { uid: tile.uid, source: this.id }, null, tile.workerID);
     },
 

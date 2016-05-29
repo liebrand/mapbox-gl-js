@@ -3,35 +3,74 @@
 var DOM = require('../../util/dom'),
     util = require('../../util/util');
 
-module.exports = DragPan;
+module.exports = DragPanHandler;
 
-var inertiaLinearity = 0.25,
+var inertiaLinearity = 0.3,
     inertiaEasing = util.bezier(0, 0, inertiaLinearity, 1),
-    inertiaMaxSpeed = 3000, // px/s
-    inertiaDeceleration = 4000; // px/s^2
+    inertiaMaxSpeed = 1400, // px/s
+    inertiaDeceleration = 2500; // px/s^2
 
 
-function DragPan(map) {
+/**
+ * The `DragPanHandler` allows a user to pan the map by clicking and dragging
+ * the cursor.
+ * @class DragPanHandler
+ */
+function DragPanHandler(map) {
     this._map = map;
     this._el = map.getCanvasContainer();
 
     util.bindHandlers(this);
 }
 
-DragPan.prototype = {
-    enable: function () {
-        this._el.addEventListener('mousedown', this._onDown);
-        this._el.addEventListener('touchstart', this._onDown);
+DragPanHandler.prototype = {
+
+    _enabled: false,
+    _active: false,
+
+    /**
+     * Returns the current enabled/disabled state of the "drag to pan" interaction.
+     * @returns {boolean} enabled state
+     */
+    isEnabled: function () {
+        return this._enabled;
     },
 
+    /**
+     * Returns true if the "drag to pan" interaction is currently active, i.e. currently being used.
+     * @returns {boolean} active state
+     */
+    isActive: function () {
+        return this._active;
+    },
+
+    /**
+     * Enable the "drag to pan" interaction.
+     * @example
+     * map.dragPan.enable();
+     */
+    enable: function () {
+        if (this.isEnabled()) return;
+        this._el.addEventListener('mousedown', this._onDown);
+        this._el.addEventListener('touchstart', this._onDown);
+        this._enabled = true;
+    },
+
+    /**
+     * Disable the "drag to pan" interaction.
+     * @example
+     * map.dragPan.disable();
+     */
     disable: function () {
+        if (!this.isEnabled()) return;
         this._el.removeEventListener('mousedown', this._onDown);
         this._el.removeEventListener('touchstart', this._onDown);
+        this._enabled = false;
     },
 
     _onDown: function (e) {
         if (this._ignoreEvent(e)) return;
-        if (this.active) return;
+        if (this.isActive()) return;
 
         if (e.touches) {
             document.addEventListener('touchmove', this._onMove);
@@ -41,7 +80,7 @@ DragPan.prototype = {
             document.addEventListener('mouseup', this._onMouseUp);
         }
 
-        this.active = false;
+        this._active = false;
         this._startPos = this._pos = DOM.mousePos(this._el, e);
         this._inertia = [[Date.now(), this._pos]];
     },
@@ -49,8 +88,8 @@ DragPan.prototype = {
     _onMove: function (e) {
         if (this._ignoreEvent(e)) return;
 
-        if (!this.active) {
-            this.active = true;
+        if (!this.isActive()) {
+            this._active = true;
             this._fireEvent('dragstart', e);
             this._fireEvent('movestart', e);
         }
@@ -73,9 +112,9 @@ DragPan.prototype = {
     },
 
     _onUp: function (e) {
-        if (!this.active) return;
+        if (!this.isActive()) return;
 
-        this.active = false;
+        this._active = false;
         this._fireEvent('dragend', e);
         this._drainInertiaBuffer();
 
@@ -115,7 +154,7 @@ DragPan.prototype = {
             duration: duration * 1000,
             easing: inertiaEasing,
             noMoveStart: true
-        });
+        }, { originalEvent: e });
     },
 
     _onMouseUp: function (e) {
@@ -139,8 +178,8 @@ DragPan.prototype = {
     _ignoreEvent: function (e) {
         var map = this._map;
 
-        if (map.boxZoom && map.boxZoom.active) return true;
-        if (map.dragRotate && map.dragRotate.active) return true;
+        if (map.boxZoom && map.boxZoom.isActive()) return true;
+        if (map.dragRotate && map.dragRotate.isActive()) return true;
         if (e.touches) {
             return (e.touches.length > 1);
         } else {
@@ -154,13 +193,11 @@ DragPan.prototype = {
     _drainInertiaBuffer: function () {
         var inertia = this._inertia,
             now = Date.now(),
-            cutoff = 50;   // msec
+            cutoff = 160;   // msec
 
-        while (inertia.length > 0 && now - inertia[0][0] > cutoff)
-            inertia.shift();
+        while (inertia.length > 0 && now - inertia[0][0] > cutoff) inertia.shift();
     }
 };
-
 
 
 /**
@@ -169,8 +206,7 @@ DragPan.prototype = {
  * @event dragstart
  * @memberof Map
  * @instance
- * @type {Object}
- * @property {Event} originalEvent the original DOM event
+ * @property {EventData} data Original event data
  */
 
 /**
@@ -179,8 +215,7 @@ DragPan.prototype = {
  * @event drag
  * @memberof Map
  * @instance
- * @type {Object}
- * @property {Event} originalEvent the original DOM event
+ * @property {EventData} data Original event data
  */
 
 /**
@@ -189,6 +224,5 @@ DragPan.prototype = {
  * @event dragend
  * @memberof Map
  * @instance
- * @type {Object}
- * @property {Event} originalEvent the original DOM event
+ * @property {EventData} data Original event data
  */

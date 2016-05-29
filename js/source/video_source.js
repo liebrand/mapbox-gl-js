@@ -2,19 +2,24 @@
 
 var util = require('../util/util');
 var Tile = require('./tile');
+var TileCoord = require('./tile_coord');
 var LngLat = require('../geo/lng_lat');
 var Point = require('point-geometry');
 var Evented = require('../util/evented');
 var ajax = require('../util/ajax');
+var EXTENT = require('../data/bucket').EXTENT;
+var RasterBoundsArray = require('../render/draw_raster').RasterBoundsArray;
+var Buffer = require('../data/buffer');
+var VertexArrayObject = require('../render/vertex_array_object');
 
 module.exports = VideoSource;
 
 /**
  * Create a Video data source instance given an options object
  * @class VideoSource
- * @param {Object} [options]
+ * @param {Object} options
  * @param {Array<string>} options.urls An array of URLs to video files
- * @param {Array} options.coordinates lng, lat coordinates in order clockwise starting at the top left: tl, tr, br, bl
+ * @param {Array} options.coordinates Four geographical [lng, lat] coordinates in clockwise order defining the corners (starting with top left) of the video. Does not have to be a rectangle.
  * @example
  * var sourceObj = new mapboxgl.VideoSource({
  *    url: [
@@ -32,6 +37,9 @@ module.exports = VideoSource;
  * map.removeSource('some id');  // remove
  */
 function VideoSource(options) {
+    this.urls = options.urls;
+    this.coordinates = options.coordinates;
+
     ajax.getVideo(options.urls, function(err, video) {
         // @TODO handle errors via event.
         if (err) return;
@@ -56,8 +64,7 @@ function VideoSource(options) {
 
         if (this.map) {
             this.video.play();
-            this.createTile(options.coordinates);
-            this.fire('change');
+            this.setCoordinates(options.coordinates);
         }
     }.bind(this));
 }
@@ -78,46 +85,56 @@ VideoSource.prototype = util.inherit(Evented, /** @lends VideoSource.prototype *
         this.map = map;
         if (this.video) {
             this.video.play();
-            this.createTile();
+            this.setCoordinates(this.coordinates);
         }
     },
 
-    createTile: function(cornerGeoCoords) {
-        /*
-         * Calculate which mercator tile is suitable for rendering the video in
-         * and create a buffer with the corner coordinates. These coordinates
-         * may be outside the tile, because raster tiles aren't clipped when rendering.
-         */
+    /**
+     * Update video coordinates and rerender map
+     *
+     * @param {Array} coordinates Four geographical [lng, lat] coordinates in clockwise order defining the corners (starting with top left) of the video. Does not have to be a rectangle.
+     * @returns {VideoSource} this
+     */
+    setCoordinates: function(coordinates) {
+        this.coordinates = coordinates;
+
+        // Calculate which mercator tile is suitable for rendering the video in
+        // and create a buffer with the corner coordinates. These coordinates
+        // may be outside the tile, because raster tiles aren't clipped when rendering.
+
         var map = this.map;
-        var cornerZ0Coords = cornerGeoCoords.map(function(coord) {
+        var cornerZ0Coords = coordinates.map(function(coord) {
             return map.transform.locationCoordinate(LngLat.convert(coord)).zoomTo(0);
         });
 
         var centerCoord = this.centerCoord = util.getCoordinatesCenter(cornerZ0Coords);
+        centerCoord.column = Math.round(centerCoord.column);
+        centerCoord.row = Math.round(centerCoord.row);
 
-        var tileExtent = 4096;
+
         var tileCoords = cornerZ0Coords.map(function(coord) {
             var zoomedCoord = coord.zoomTo(centerCoord.zoom);
             return new Point(
-                Math.round((zoomedCoord.column - centerCoord.column) * tileExtent),
-                Math.round((zoomedCoord.row - centerCoord.row) * tileExtent));
+                Math.round((zoomedCoord.column - centerCoord.column) * EXTENT),
+                Math.round((zoomedCoord.row - centerCoord.row) * EXTENT));
         });
 
-        var gl = map.painter.gl;
         var maxInt16 = 32767;
-        var array = new Int16Array([
-            tileCoords[0].x, tileCoords[0].y, 0, 0,
-            tileCoords[1].x, tileCoords[1].y, maxInt16, 0,
-            tileCoords[3].x, tileCoords[3].y, 0, maxInt16,
-            tileCoords[2].x, tileCoords[2].y, maxInt16, maxInt16
-        ]);
+        var array = new RasterBoundsArray();
+        array.emplaceBack(tileCoords[0].x, tileCoords[0].y, 0, 0);
+        array.emplaceBack(tileCoords[1].x, tileCoords[1].y, maxInt16, 0);
+        array.emplaceBack(tileCoords[3].x, tileCoords[3].y, 0, maxInt16);
+        array.emplaceBack(tileCoords[2].x, tileCoords[2].y, maxInt16, maxInt16);
 
-        this.tile = new Tile();
+        this.tile = new Tile(new TileCoord(centerCoord.zoom, centerCoord.column, centerCoord.row));
         this.tile.buckets = {};
 
-        this.tile.boundsBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.tile.boundsBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, array, gl.STATIC_DRAW);
+        this.tile.boundsBuffer = new Buffer(array.serialize(), RasterBoundsArray.serialize(), Buffer.BufferType.VERTEX);
+        this.tile.boundsVAO = new VertexArrayObject();
+
+        this.fire('change');
+
+        return this;
     },
 
     loaded: function() {
@@ -154,7 +171,7 @@ VideoSource.prototype = util.inherit(Evented, /** @lends VideoSource.prototype *
     },
 
     getVisibleCoordinates: function() {
-        if (this.centerCoord) return [this.centerCoord];
+        if (this.tile) return [this.tile.coord];
         else return [];
     },
 
@@ -162,11 +179,11 @@ VideoSource.prototype = util.inherit(Evented, /** @lends VideoSource.prototype *
         return this.tile;
     },
 
-    featuresAt: function(point, params, callback) {
-        return callback(null, []);
-    },
-
-    featuresIn: function(bbox, params, callback) {
-        return callback(null, []);
+    serialize: function() {
+        return {
+            type: 'video',
+            urls: this.urls,
+            coordinates: this.coordinates
+        };
     }
 });

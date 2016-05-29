@@ -2,6 +2,7 @@
 
 var Point = require('point-geometry');
 var VectorTileFeature = require('vector-tile').VectorTileFeature;
+var EXTENT = require('../data/bucket').EXTENT;
 
 module.exports = GeoJSONWrapper;
 
@@ -9,6 +10,7 @@ module.exports = GeoJSONWrapper;
 function GeoJSONWrapper(features) {
     this.features = features;
     this.length = features.length;
+    this.extent = EXTENT;
 }
 
 GeoJSONWrapper.prototype.feature = function(i) {
@@ -17,9 +19,16 @@ GeoJSONWrapper.prototype.feature = function(i) {
 
 function FeatureWrapper(feature) {
     this.type = feature.type;
-    this.rawGeometry = feature.type === 1 ? [feature.geometry] : feature.geometry;
+    if (feature.type === 1) {
+        this.rawGeometry = [];
+        for (var i = 0; i < feature.geometry.length; i++) {
+            this.rawGeometry.push([feature.geometry[i]]);
+        }
+    } else {
+        this.rawGeometry = feature.geometry;
+    }
     this.properties = feature.tags;
-    this.extent = 4096;
+    this.extent = EXTENT;
 }
 
 FeatureWrapper.prototype.loadGeometry = function() {

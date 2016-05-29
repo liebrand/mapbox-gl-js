@@ -1,8 +1,5 @@
 'use strict';
 
-var CollisionBox = require('./collision_box');
-var Point = require('point-geometry');
-
 module.exports = CollisionFeature;
 
 /**
@@ -14,6 +11,8 @@ module.exports = CollisionFeature;
  * @class CollisionFeature
  * @param {Array<Point>} line The geometry the label is placed on.
  * @param {Anchor} anchor The point along the line around which the label is anchored.
+ * @param {VectorTileFeature} feature The VectorTileFeature that this CollisionFeature was created for.
+ * @param {Array<string>} layerIDs The IDs of the layers that this CollisionFeature is a part of.
  * @param {Object} shaped The text or icon shaping results.
  * @param {number} boxScale A magic number used to convert from glyph metrics units to geometry units.
  * @param {number} padding The amount of padding to add around the label edges.
@@ -21,30 +20,41 @@ module.exports = CollisionFeature;
  *
  * @private
  */
-function CollisionFeature(line, anchor, shaped, boxScale, padding, alignLine) {
+function CollisionFeature(collisionBoxArray, line, anchor, featureIndex, sourceLayerIndex, bucketIndex, shaped, boxScale, padding, alignLine, straight) {
 
     var y1 = shaped.top * boxScale - padding;
     var y2 = shaped.bottom * boxScale + padding;
     var x1 = shaped.left * boxScale - padding;
     var x2 = shaped.right * boxScale + padding;
 
-    this.boxes = [];
+    this.boxStartIndex = collisionBoxArray.length;
 
     if (alignLine) {
 
         var height = y2 - y1;
         var length = x2 - x1;
 
-        if (height <= 0) return;
+        if (height > 0) {
+            // set minimum box height to avoid very many small labels
+            height = Math.max(10 * boxScale, height);
 
-        // set minimum box height to avoid very many small labels
-        height = Math.max(10 * boxScale, height);
-
-        this._addLineCollisionBoxes(line, anchor, length, height);
+            if (straight) {
+                // used for icon labels that are aligned with the line, but don't curve along it
+                var vector = line[anchor.segment + 1].sub(line[anchor.segment])._unit()._mult(length);
+                var straightLine = [anchor.sub(vector), anchor.add(vector)];
+                this._addLineCollisionBoxes(collisionBoxArray, straightLine, anchor, 0, length, height, featureIndex, sourceLayerIndex, bucketIndex);
+            } else {
+                // used for text labels that curve along a line
+                this._addLineCollisionBoxes(collisionBoxArray, line, anchor, anchor.segment, length, height, featureIndex, sourceLayerIndex, bucketIndex);
+            }
+        }
 
     } else {
-        this.boxes.push(new CollisionBox(new Point(anchor.x, anchor.y), x1, y1, x2, y2, Infinity));
+        collisionBoxArray.emplaceBack(anchor.x, anchor.y, x1, y1, x2, y2, Infinity, featureIndex, sourceLayerIndex, bucketIndex,
+                0, 0, 0, 0, 0);
     }
+
+    this.boxEndIndex = collisionBoxArray.length;
 }
 
 /**
@@ -53,11 +63,13 @@ function CollisionFeature(line, anchor, shaped, boxScale, padding, alignLine) {
  * @param {Array<Point>} line
  * @param {Anchor} anchor
  * @param {number} labelLength The length of the label in geometry units.
+ * @param {Anchor} anchor The point along the line around which the label is anchored.
+ * @param {VectorTileFeature} feature The VectorTileFeature that this CollisionFeature was created for.
  * @param {number} boxSize The size of the collision boxes that will be created.
  *
  * @private
  */
-CollisionFeature.prototype._addLineCollisionBoxes = function(line, anchor, labelLength, boxSize) {
+CollisionFeature.prototype._addLineCollisionBoxes = function(collisionBoxArray, line, anchor, segment, labelLength, boxSize, featureIndex, sourceLayerIndex, bucketIndex) {
     var step = boxSize / 2;
     var nBoxes = Math.floor(labelLength / step);
 
@@ -68,7 +80,7 @@ CollisionFeature.prototype._addLineCollisionBoxes = function(line, anchor, label
     var bboxes = this.boxes;
 
     var p = anchor;
-    var index = anchor.segment + 1;
+    var index = segment + 1;
     var anchorDistance = firstBoxOffset;
 
     // move backwards along the line to the first segment the label appears on
@@ -105,12 +117,15 @@ CollisionFeature.prototype._addLineCollisionBoxes = function(line, anchor, label
 
         var p0 = line[index];
         var p1 = line[index + 1];
-        var boxAnchorPoint = p1.sub(p0)._unit()._mult(segmentBoxDistance)._add(p0);
+        var boxAnchorPoint = p1.sub(p0)._unit()._mult(segmentBoxDistance)._add(p0)._round();
 
         var distanceToInnerEdge = Math.max(Math.abs(boxDistanceToAnchor - firstBoxOffset) - step / 2, 0);
         var maxScale = labelLength / 2 / distanceToInnerEdge;
 
-        bboxes.push(new CollisionBox(boxAnchorPoint, -boxSize / 2, -boxSize / 2, boxSize / 2, boxSize / 2, maxScale));
+        collisionBoxArray.emplaceBack(boxAnchorPoint.x, boxAnchorPoint.y,
+                -boxSize / 2, -boxSize / 2, boxSize / 2, boxSize / 2, maxScale,
+                featureIndex, sourceLayerIndex, bucketIndex,
+                0, 0, 0, 0, 0);
     }
 
     return bboxes;

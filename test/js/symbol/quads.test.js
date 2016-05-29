@@ -1,6 +1,6 @@
 'use strict';
 
-var test = require('prova');
+var test = require('tap').test;
 
 var getIconQuads = require('../../../js/symbol/quads').getIconQuads;
 var Anchor = require('../../../js/symbol/anchor');
@@ -14,6 +14,7 @@ test('getIconQuads', function(t) {
         left: -7,
         right: 8,
         image: {
+            pixelRatio: 1,
             rect: { w: 15, h: 11}
         }
     };

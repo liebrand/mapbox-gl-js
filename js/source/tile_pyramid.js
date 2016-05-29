@@ -3,8 +3,10 @@
 var Tile = require('./tile');
 var TileCoord = require('./tile_coord');
 var Point = require('point-geometry');
-var Cache = require('../util/mru_cache');
+var Cache = require('../util/lru_cache');
+var Coordinate = require('../geo/coordinate');
 var util = require('../util/util');
+var EXTENT = require('../data/bucket').EXTENT;
 
 module.exports = TilePyramid;
 
@@ -34,10 +36,14 @@ function TilePyramid(options) {
     this._redoPlacement = options.redoPlacement;
 
     this._tiles = {};
-    this._cache = new Cache(options.cacheSize, function(tile) { return this._unload(tile); }.bind(this));
+    this._cache = new Cache(0, function(tile) { return this._unload(tile); }.bind(this));
 
     this._filterRendered = this._filterRendered.bind(this);
 }
+
+
+TilePyramid.maxOverzooming = 10;
+TilePyramid.maxUnderzooming = 3;
 
 TilePyramid.prototype = {
     /**
@@ -196,7 +202,29 @@ TilePyramid.prototype = {
                 retain[coord.id] = true;
                 return tile;
             }
+            if (this._cache.has(coord.id)) {
+                this.addTile(coord);
+                retain[coord.id] = true;
+                return this._tiles[coord.id];
+            }
         }
+    },
+
+    /**
+     * Resizes the tile cache based on the current viewport's size.
+     *
+     * Larger viewports use more tiles and need larger caches. Larger viewports
+     * are more likely to be found on devices with more memory and on pages where
+     * the map is more important.
+     *
+     * @private
+     */
+    updateCacheSize: function(transform) {
+        var widthInTiles = Math.ceil(transform.width / transform.tileSize) + 1;
+        var heightInTiles = Math.ceil(transform.height / transform.tileSize) + 1;
+        var approxTilesInView = widthInTiles * heightInTiles;
+        var commonZoomRange = 5;
+        this._cache.setMaxSize(Math.floor(approxTilesInView * commonZoomRange));
     },
 
     /**
@@ -209,10 +237,12 @@ TilePyramid.prototype = {
         var coord;
         var tile;
 
+        this.updateCacheSize(transform);
+
         // Determine the overzooming/underzooming amounts.
         var zoom = (this.roundZoom ? Math.round : Math.floor)(this.getZoom(transform));
-        var minCoveringZoom = util.clamp(zoom - 10, this.minzoom, this.maxzoom);
-        var maxCoveringZoom = util.clamp(zoom + 3,  this.minzoom, this.maxzoom);
+        var minCoveringZoom = Math.max(zoom - TilePyramid.maxOverzooming, this.minzoom);
+        var maxCoveringZoom = Math.max(zoom + TilePyramid.maxUnderzooming,  this.minzoom);
 
         // Retain is a list of tiles that we shouldn't delete, even if they are not
         // the most ideal tile for the current viewport. This may include tiles like
@@ -349,63 +379,86 @@ TilePyramid.prototype = {
     },
 
     /**
-     * For a given coordinate, search through our current tiles and attempt
-     * to find a tile at that point
-     * @param {Coordinate} coord
-     * @returns {Object} tile
-     * @private
-     */
-    tileAt: function(coord) {
-        var ids = this.orderedIDs();
-        for (var i = 0; i < ids.length; i++) {
-            var tile = this._tiles[ids[i]];
-            var pos = tile.positionAt(coord);
-            if (pos && pos.x >= 0 && pos.x < tile.tileExtent && pos.y >= 0 && pos.y < tile.tileExtent) {
-                // The click is within the viewport. There is only ever one tile in
-                // a layer that has this property.
-                return {
-                    tile: tile,
-                    x: pos.x,
-                    y: pos.y,
-                    scale: this.transform.worldSize / Math.pow(2, tile.coord.z)
-                };
-            }
-        }
-    },
-
-    /**
      * Search through our current tiles and attempt to find the tiles that
      * cover the given bounds.
-     * @param {Array<Coordinate>} bounds [minxminy, maxxmaxy] coordinates of the corners of bounding rectangle
+     * @param {Array<Coordinate>} queryGeometry coordinates of the corners of bounding rectangle
      * @returns {Array<Object>} result items have {tile, minX, maxX, minY, maxY}, where min/max bounding values are the given bounds transformed in into the coordinate space of this tile.
      * @private
      */
-    tilesIn: function(bounds) {
-        var result = [];
+    tilesIn: function(queryGeometry) {
+        var tileResults = {};
         var ids = this.orderedIDs();
+
+        var minX = Infinity;
+        var minY = Infinity;
+        var maxX = -Infinity;
+        var maxY = -Infinity;
+        var z = queryGeometry[0].zoom;
+
+        for (var k = 0; k < queryGeometry.length; k++) {
+            var p = queryGeometry[k];
+            minX = Math.min(minX, p.column);
+            minY = Math.min(minY, p.row);
+            maxX = Math.max(maxX, p.column);
+            maxY = Math.max(maxY, p.row);
+        }
 
         for (var i = 0; i < ids.length; i++) {
             var tile = this._tiles[ids[i]];
+            var coord = TileCoord.fromID(ids[i]);
+
             var tileSpaceBounds = [
-                tile.positionAt(bounds[0]),
-                tile.positionAt(bounds[1])
+                coordinateToTilePoint(coord, tile.sourceMaxZoom, new Coordinate(minX, minY, z)),
+                coordinateToTilePoint(coord, tile.sourceMaxZoom, new Coordinate(maxX, maxY, z))
             ];
-            if (tileSpaceBounds[0].x < tile.tileExtent && tileSpaceBounds[0].y < tile.tileExtent &&
+
+            if (tileSpaceBounds[0].x < EXTENT && tileSpaceBounds[0].y < EXTENT &&
                 tileSpaceBounds[1].x >= 0 && tileSpaceBounds[1].y >= 0) {
-                result.push({
-                    tile: tile,
-                    minX: tileSpaceBounds[0].x,
-                    maxX: tileSpaceBounds[1].x,
-                    minY: tileSpaceBounds[0].y,
-                    maxY: tileSpaceBounds[1].y
-                });
+
+                var tileSpaceQueryGeometry = [];
+                for (var j = 0; j < queryGeometry.length; j++) {
+                    tileSpaceQueryGeometry.push(coordinateToTilePoint(coord, tile.sourceMaxZoom, queryGeometry[j]));
+                }
+
+                var tileResult = tileResults[tile.coord.id];
+                if (tileResult === undefined) {
+                    tileResult = tileResults[tile.coord.id] = {
+                        tile: tile,
+                        coord: coord,
+                        queryGeometry: [],
+                        scale: Math.pow(2, this.transform.zoom - tile.coord.z)
+                    };
+                }
+
+                // Wrapped tiles share one tileResult object but can have multiple queryGeometry parts
+                tileResult.queryGeometry.push(tileSpaceQueryGeometry);
             }
         }
 
-        return result;
+        var results = [];
+        for (var t in tileResults) {
+            results.push(tileResults[t]);
+        }
+        return results;
     }
 };
 
+/**
+ * Convert a coordinate to a point in a tile's coordinate space.
+ * @param {Coordinate} tileCoord
+ * @param {Coordinate} coord
+ * @returns {Object} position
+ * @private
+ */
+function coordinateToTilePoint(tileCoord, sourceMaxZoom, coord) {
+    var zoomedCoord = coord.zoomTo(Math.min(tileCoord.z, sourceMaxZoom));
+    return {
+        x: (zoomedCoord.column - (tileCoord.x + tileCoord.w * Math.pow(2, tileCoord.z))) * EXTENT,
+        y: (zoomedCoord.row - tileCoord.y) * EXTENT
+    };
+
+}
+
 function compareKeyZoom(a, b) {
-    return (b % 32) - (a % 32);
+    return (a % 32) - (b % 32);
 }

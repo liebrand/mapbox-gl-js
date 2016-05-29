@@ -1,36 +1,18 @@
 'use strict';
 
-var BinPack = require('./bin_pack');
+var ShelfPack = require('shelf-pack');
+var util = require('../util/util');
 
 module.exports = GlyphAtlas;
 function GlyphAtlas(width, height) {
     this.width = width;
     this.height = height;
 
-    this.bin = new BinPack(width, height);
+    this.bin = new ShelfPack(width, height);
     this.index = {};
     this.ids = {};
     this.data = new Uint8Array(width * height);
 }
-
-GlyphAtlas.prototype = {
-    get debug() {
-        return 'canvas' in this;
-    },
-    set debug(value) {
-        if (value && !this.canvas) {
-            this.canvas = document.createElement('canvas');
-            this.canvas.width = this.width;
-            this.canvas.height = this.height;
-            document.body.appendChild(this.canvas);
-            this.ctx = this.canvas.getContext('2d');
-        } else if (!value && this.canvas) {
-            this.canvas.parentNode.removeChild(this.canvas);
-            delete this.ctx;
-            delete this.canvas;
-        }
-    }
-};
 
 GlyphAtlas.prototype.getGlyphs = function() {
     var glyphs = {},
@@ -68,44 +50,10 @@ GlyphAtlas.prototype.getRects = function() {
     return rects;
 };
 
-GlyphAtlas.prototype.removeGlyphs = function(id) {
-    for (var key in this.ids) {
-
-        var ids = this.ids[key];
-
-        var pos = ids.indexOf(id);
-        if (pos >= 0) ids.splice(pos, 1);
-        this.ids[key] = ids;
-
-        if (!ids.length) {
-            var rect = this.index[key];
-
-            var target = this.data;
-            for (var y = 0; y < rect.h; y++) {
-                var y1 = this.width * (rect.y + y) + rect.x;
-                for (var x = 0; x < rect.w; x++) {
-                    target[y1 + x] = 0;
-                }
-            }
-
-            this.dirty = true;
-
-            this.bin.release(rect);
-
-            delete this.index[key];
-            delete this.ids[key];
-        }
-    }
-
-
-    this.updateTexture(this.gl);
-};
 
 GlyphAtlas.prototype.addGlyph = function(id, name, glyph, buffer) {
-    if (!glyph) {
-        // console.warn('missing glyph', code, String.fromCharCode(code));
-        return null;
-    }
+    if (!glyph) return null;
+
     var key = name + "#" + glyph.id;
 
     // The glyph is already in this texture.
@@ -135,10 +83,14 @@ GlyphAtlas.prototype.addGlyph = function(id, name, glyph, buffer) {
     packWidth += (4 - packWidth % 4);
     packHeight += (4 - packHeight % 4);
 
-    var rect = this.bin.allocate(packWidth, packHeight);
-    if (rect.x < 0) {
-        console.warn('glyph bitmap overflow');
-        return { glyph: glyph, rect: null };
+    var rect = this.bin.packOne(packWidth, packHeight);
+    if (!rect) {
+        this.resize();
+        rect = this.bin.packOne(packWidth, packHeight);
+    }
+    if (!rect) {
+        util.warnOnce('glyph bitmap overflow');
+        return null;
     }
 
     this.index[key] = rect;
@@ -157,6 +109,35 @@ GlyphAtlas.prototype.addGlyph = function(id, name, glyph, buffer) {
     this.dirty = true;
 
     return rect;
+};
+
+GlyphAtlas.prototype.resize = function() {
+    var origw = this.width,
+        origh = this.height;
+
+    // For now, don't grow the atlas beyond 1024x1024 because of how
+    // texture coords pack into unsigned byte in symbol bucket.
+    if (origw > 512 || origh > 512) return;
+
+    if (this.texture) {
+        if (this.gl) {
+            this.gl.deleteTexture(this.texture);
+        }
+        this.texture = null;
+    }
+
+    this.width *= 2;
+    this.height *= 2;
+    this.bin.resize(this.width, this.height);
+
+    var buf = new ArrayBuffer(this.width * this.height),
+        src, dst;
+    for (var i = 0; i < origh; i++) {
+        src = new Uint8Array(this.data.buffer, origh * i, origw);
+        dst = new Uint8Array(buf, origh * i * 2, origw);
+        dst.set(src);
+    }
+    this.data = new Uint8Array(buf);
 };
 
 GlyphAtlas.prototype.bind = function(gl) {
@@ -178,28 +159,7 @@ GlyphAtlas.prototype.bind = function(gl) {
 GlyphAtlas.prototype.updateTexture = function(gl) {
     this.bind(gl);
     if (this.dirty) {
-
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, gl.ALPHA, gl.UNSIGNED_BYTE, this.data);
-
-        // DEBUG
-        if (this.ctx) {
-            var data = this.ctx.getImageData(0, 0, this.width, this.height);
-            for (var i = 0, j = 0; i < this.data.length; i++, j += 4) {
-                data.data[j] = this.data[i];
-                data.data[j + 1] = this.data[i];
-                data.data[j + 2] = this.data[i];
-                data.data[j + 3] = 255;
-            }
-            this.ctx.putImageData(data, 0, 0);
-
-            this.ctx.strokeStyle = 'red';
-            for (var k = 0; k < this.bin.free.length; k++) {
-                var free = this.bin.free[k];
-                this.ctx.strokeRect(free.x, free.y, free.w, free.h);
-            }
-        }
-        // END DEBUG
-
         this.dirty = false;
     }
 };

@@ -8,7 +8,8 @@ var normalizeURL = require('../util/mapbox').normalizeTileURL;
 module.exports = VectorTileSource;
 
 function VectorTileSource(options) {
-    util.extend(this, util.pick(options, ['url', 'tileSize']));
+    util.extend(this, util.pick(options, ['url', 'scheme', 'tileSize']));
+    this._options = util.extend({ type: 'vector' }, options);
 
     if (this.tileSize !== 512) {
         throw new Error('vector tile sources must have a tileSize of 512');
@@ -20,6 +21,7 @@ function VectorTileSource(options) {
 VectorTileSource.prototype = util.inherit(Evented, {
     minzoom: 0,
     maxzoom: 22,
+    scheme: 'xyz',
     tileSize: 512,
     reparseOverscaled: true,
     _loaded: false,
@@ -45,16 +47,20 @@ VectorTileSource.prototype = util.inherit(Evented, {
         }
     },
 
+    serialize: function() {
+        return util.extend({}, this._options);
+    },
+
     getVisibleCoordinates: Source._getVisibleCoordinates,
     getTile: Source._getTile,
 
-    featuresAt: Source._vectorFeaturesAt,
-    featuresIn: Source._vectorFeaturesIn,
+    queryRenderedFeatures: Source._queryRenderedVectorFeatures,
+    querySourceFeatures: Source._querySourceFeatures,
 
     _loadTile: function(tile) {
         var overscaling = tile.coord.z > this.maxzoom ? Math.pow(2, tile.coord.z - this.maxzoom) : 1;
         var params = {
-            url: normalizeURL(tile.coord.url(this.tiles, this.maxzoom), this.url),
+            url: normalizeURL(tile.coord.url(this.tiles, this.maxzoom, this.scheme), this.url),
             uid: tile.uid,
             coord: tile.coord,
             zoom: tile.coord.z,
@@ -63,10 +69,11 @@ VectorTileSource.prototype = util.inherit(Evented, {
             overscaling: overscaling,
             angle: this.map.transform.angle,
             pitch: this.map.transform.pitch,
-            collisionDebug: this.map.collisionDebug
+            showCollisionBoxes: this.map.showCollisionBoxes
         };
 
         if (tile.workerID) {
+            params.rawTileData = tile.rawTileData;
             this.dispatcher.send('reload tile', params, this._tileLoaded.bind(this, tile), tile.workerID);
         } else {
             tile.workerID = this.dispatcher.send('load tile', params, this._tileLoaded.bind(this, tile));
@@ -78,11 +85,12 @@ VectorTileSource.prototype = util.inherit(Evented, {
             return;
 
         if (err) {
+            tile.errored = true;
             this.fire('tile.error', {tile: tile, error: err});
             return;
         }
 
-        tile.loadVectorData(data);
+        tile.loadVectorData(data, this.map.style);
 
         if (tile.redoWhenDone) {
             tile.redoWhenDone = false;
@@ -108,7 +116,6 @@ VectorTileSource.prototype = util.inherit(Evented, {
 
     _unloadTile: function(tile) {
         tile.unloadVectorData(this.map.painter);
-        this.glyphAtlas.removeGlyphs(tile.uid);
         this.dispatcher.send('remove tile', { uid: tile.uid, source: this.id }, null, tile.workerID);
     },
 

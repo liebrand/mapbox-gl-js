@@ -22,14 +22,17 @@ function TileCoord(z, x, y, w) {
     if (w < 0) w = w * -1 - 1;
     var dim = 1 << this.z;
     this.id = ((dim * dim * w + dim * this.y + this.x) * 32) + this.z;
+
+    // for caching pos matrix calculation when rendering
+    this.posMatrix = null;
 }
 
 TileCoord.prototype.toString = function() {
     return this.z + "/" + this.x + "/" + this.y;
 };
 
-TileCoord.prototype.toCoordinate = function() {
-    var zoom = this.z;
+TileCoord.prototype.toCoordinate = function(sourceMaxZoom) {
+    var zoom = Math.min(this.z, sourceMaxZoom);
     var tileScale = Math.pow(2, zoom);
     var row = this.y;
     var column = this.x + tileScale * this.w;
@@ -48,12 +51,12 @@ TileCoord.fromID = function(id) {
 };
 
 // given a list of urls, choose a url template and return a tile URL
-TileCoord.prototype.url = function(urls, sourceMaxZoom) {
+TileCoord.prototype.url = function(urls, sourceMaxZoom, scheme) {
     return urls[(this.x + this.y) % urls.length]
         .replace('{prefix}', (this.x % 16).toString(16) + (this.y % 16).toString(16))
         .replace('{z}', Math.min(this.z, sourceMaxZoom || this.z))
         .replace('{x}', this.x)
-        .replace('{y}', this.y);
+        .replace('{y}', scheme === 'tms' ? (Math.pow(2, this.z) - this.y - 1) : this.y);
 };
 
 // Return the coordinate of the parent tile

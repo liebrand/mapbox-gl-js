@@ -1,9 +1,11 @@
 'use strict';
 
+var util = require('../util/util');
+
 module.exports = LineAtlas;
 
 /**
- * Much like a GlyphAtlas, a LineAtlas lets us reuse rendered dashed lines
+ * A LineAtlas lets us reuse rendered dashed lines
  * by writing many of them to a texture and then fetching their positions
  * using .getDash.
  *
@@ -50,7 +52,7 @@ LineAtlas.prototype.addDash = function(dasharray, round) {
     var offset = 128;
 
     if (this.nextRow + height > this.height) {
-        console.warn('LineAtlas out of space');
+        util.warnOnce('LineAtlas out of space');
         return null;
     }
 
@@ -140,31 +142,4 @@ LineAtlas.prototype.bind = function(gl) {
             gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, gl.RGBA, gl.UNSIGNED_BYTE, this.data);
         }
     }
-};
-
-LineAtlas.prototype.debug = function() {
-
-    var canvas = document.createElement('canvas');
-
-    document.body.appendChild(canvas);
-    canvas.style.position = 'absolute';
-    canvas.style.top = 0;
-    canvas.style.left = 0;
-    canvas.style.background = '#ff0';
-
-    canvas.width = this.width;
-    canvas.height = this.height;
-
-    var ctx = canvas.getContext('2d');
-    var data = ctx.getImageData(0, 0, this.width, this.height);
-    for (var i = 0; i < this.data.length; i++) {
-        if (this.sdf) {
-            var k = i * 4;
-            data.data[k] = data.data[k + 1] = data.data[k + 2] = 0;
-            data.data[k + 3] = this.data[i];
-        } else {
-            data.data[i] = this.data[i];
-        }
-    }
-    ctx.putImageData(data, 0, 0);
 };

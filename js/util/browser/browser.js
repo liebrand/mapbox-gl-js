@@ -1,6 +1,26 @@
 'use strict';
 
-var Canvas = require('./canvas');
+/**
+ * Unlike js/util/browser.js, this code is written with the expectation
+ * of a browser environment with a global 'window' object
+ * @module browser
+ * @private
+ */
+
+exports.window = window;
+
+/**
+ * Provides a function that outputs milliseconds: either performance.now()
+ * or a fallback to Date.now()
+ */
+module.exports.now = (function() {
+    if (window.performance &&
+        window.performance.now) {
+        return window.performance.now.bind(window.performance);
+    } else {
+        return Date.now.bind(Date);
+    }
+}());
 
 var frame = window.requestAnimationFrame ||
     window.mozRequestAnimationFrame ||
@@ -27,11 +47,11 @@ exports.timed = function (fn, dur, ctx) {
     }
 
     var abort = false,
-        start = window.performance ? window.performance.now() : Date.now();
+        start = module.exports.now();
 
     function tick(now) {
         if (abort) return;
-        if (!window.performance) now = Date.now();
+        now = module.exports.now();
 
         if (now >= start + dur) {
             fn.call(ctx, 1);
@@ -47,68 +67,14 @@ exports.timed = function (fn, dur, ctx) {
 };
 
 /**
- * Test whether the basic JavaScript and DOM features required for Mapbox GL are present.
+ * Test if the current browser supports Mapbox GL JS
  * @param {Object} options
- * @param {boolean} [options.failIfMajorPerformanceCaveat=false] If `true`, map creation will fail if the implementation determines that the performance of the created WebGL context would be dramatically lower than expected.
- * @return {boolean} Returns true if Mapbox GL should be expected to work, and false if not.
- * @memberof mapboxgl
- * @static
+ * @param {boolean} [options.failIfMajorPerformanceCaveat=false] Return `false`
+ *   if the performance of Mapbox GL JS would be dramatically worse than
+ *   expected (i.e. a software renderer would be used)
+ * @return {boolean}
  */
-exports.supported = function(options) {
-
-    var supports = [
-
-        function() { return typeof window !== 'undefined'; },
-
-        function() { return typeof document !== 'undefined'; },
-
-        function () {
-            return !!(Array.prototype &&
-                Array.prototype.every &&
-                Array.prototype.filter &&
-                Array.prototype.forEach &&
-                Array.prototype.indexOf &&
-                Array.prototype.lastIndexOf &&
-                Array.prototype.map &&
-                Array.prototype.some &&
-                Array.prototype.reduce &&
-                Array.prototype.reduceRight &&
-                Array.isArray);
-        },
-
-        function() {
-            return !!(Function.prototype && Function.prototype.bind) &&
-                !!(Object.keys &&
-                    Object.create &&
-                    Object.getPrototypeOf &&
-                    Object.getOwnPropertyNames &&
-                    Object.isSealed &&
-                    Object.isFrozen &&
-                    Object.isExtensible &&
-                    Object.getOwnPropertyDescriptor &&
-                    Object.defineProperty &&
-                    Object.defineProperties &&
-                    Object.seal &&
-                    Object.freeze &&
-                    Object.preventExtensions);
-        },
-
-        function() {
-            return 'JSON' in window && 'parse' in JSON && 'stringify' in JSON;
-        },
-
-        function() {
-            return new Canvas().supportsWebGLContext((options && options.failIfMajorPerformanceCaveat) || false);
-        },
-
-        function() { return 'Worker' in window; }
-    ];
-
-    for (var i = 0; i < supports.length; i++) {
-        if (!supports[i]()) return false;
-    }
-    return true;
-};
+exports.supported = require('mapbox-gl-js-supported');
 
 exports.hardwareConcurrency = navigator.hardwareConcurrency || 8;
 
@@ -123,3 +89,5 @@ webpImgTest.onload = function() {
     exports.supportsWebp = true;
 };
 webpImgTest.src = 'data:image/webp;base64,UklGRh4AAABXRUJQVlA4TBEAAAAvAQAAAAfQ//73v/+BiOh/AAA=';
+
+exports.supportsGeolocation = !!navigator.geolocation;

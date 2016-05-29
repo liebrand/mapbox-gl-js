@@ -1,6 +1,6 @@
 'use strict';
 
-var test = require('prova');
+var test = require('tap').test;
 var mapbox = require('../../../js/util/mapbox');
 var config = require('../../../js/util/config');
 var browser = require('../../../js/util/browser');
@@ -99,6 +99,8 @@ test("mapbox", function(t) {
             t.equal(mapbox.normalizeSpriteURL('http://www.foo.com/bar', '@2x', '.png'), 'http://www.foo.com/bar@2x.png');
             t.end();
         });
+
+        t.end();
     });
 
     t.test('.normalizeTileURL', function(t) {
@@ -116,6 +118,14 @@ test("mapbox", function(t) {
             t.equal(mapbox.normalizeTileURL('http://path.png/tile.jpg70', mapboxSource), 'http://path.png/tile@2x.jpg70');
             t.equal(mapbox.normalizeTileURL('http://path.png/tile.png?access_token=foo', mapboxSource), 'http://path.png/tile@2x.png?access_token=foo');
             browser.devicePixelRatio = 1;
+            t.end();
+        });
+
+        t.test('inserts @2x when tileSize == 512', function(t) {
+            t.equal(mapbox.normalizeTileURL('http://path.png/tile.png', mapboxSource, 512), 'http://path.png/tile@2x.png');
+            t.equal(mapbox.normalizeTileURL('http://path.png/tile.png32', mapboxSource, 512), 'http://path.png/tile@2x.png32');
+            t.equal(mapbox.normalizeTileURL('http://path.png/tile.jpg70', mapboxSource, 512), 'http://path.png/tile@2x.jpg70');
+            t.equal(mapbox.normalizeTileURL('http://path.png/tile.png?access_token=foo', mapboxSource, 512), 'http://path.png/tile@2x.png?access_token=foo');
             t.end();
         });
 

@@ -1,6 +1,7 @@
 'use strict';
 
 var util = require('../util/util');
+var StructArrayType = require('../util/struct_array');
 
 module.exports = drawRaster;
 
@@ -9,36 +10,49 @@ function drawRaster(painter, source, layer, coords) {
 
     var gl = painter.gl;
 
+    gl.enable(gl.DEPTH_TEST);
+    painter.depthMask(true);
+
     // Change depth function to prevent double drawing in areas where tiles overlap.
     gl.depthFunc(gl.LESS);
 
-    for (var i = coords.length - 1; i >= 0; i--) {
-        drawRasterTile(painter, source, layer, coords[i]);
+    var minTileZ = coords.length && coords[0].z;
+
+    for (var i = 0; i < coords.length; i++) {
+        var coord = coords[i];
+        // set the lower zoom level to sublayer 0, and higher zoom levels to higher sublayers
+        painter.setDepthSublayer(coord.z - minTileZ);
+        drawRasterTile(painter, source, layer, coord);
     }
 
     gl.depthFunc(gl.LEQUAL);
 }
 
-function drawRasterTile(painter, source, layer, coord) {
+drawRaster.RasterBoundsArray = new StructArrayType({
+    members: [
+        { name: 'a_pos', type: 'Int16', components: 2 },
+        { name: 'a_texture_pos', type: 'Int16', components: 2 }
+    ]
+});
 
-    painter.setDepthSublayer(0);
+function drawRasterTile(painter, source, layer, coord) {
 
     var gl = painter.gl;
 
     gl.disable(gl.STENCIL_TEST);
 
     var tile = source.getTile(coord);
-    var posMatrix = painter.calculatePosMatrix(coord, source.maxzoom);
+    var posMatrix = painter.transform.calculatePosMatrix(coord, source.maxzoom);
 
-    var shader = painter.rasterShader;
-    gl.switchShader(shader, posMatrix);
+    var program = painter.useProgram('raster');
+    gl.uniformMatrix4fv(program.u_matrix, false, posMatrix);
 
     // color parameters
-    gl.uniform1f(shader.u_brightness_low, layer.paint['raster-brightness-min']);
-    gl.uniform1f(shader.u_brightness_high, layer.paint['raster-brightness-max']);
-    gl.uniform1f(shader.u_saturation_factor, saturationFactor(layer.paint['raster-saturation']));
-    gl.uniform1f(shader.u_contrast_factor, contrastFactor(layer.paint['raster-contrast']));
-    gl.uniform3fv(shader.u_spin_weights, spinWeights(layer.paint['raster-hue-rotate']));
+    gl.uniform1f(program.u_brightness_low, layer.paint['raster-brightness-min']);
+    gl.uniform1f(program.u_brightness_high, layer.paint['raster-brightness-max']);
+    gl.uniform1f(program.u_saturation_factor, saturationFactor(layer.paint['raster-saturation']));
+    gl.uniform1f(program.u_contrast_factor, contrastFactor(layer.paint['raster-contrast']));
+    gl.uniform3fv(program.u_spin_weights, spinWeights(layer.paint['raster-hue-rotate']));
 
     var parentTile = tile.source && tile.source._pyramid.findLoadedParent(coord, 0, {}),
         opacities = getOpacities(tile, parentTile, layer, painter.transform);
@@ -48,32 +62,31 @@ function drawRasterTile(painter, source, layer, coord) {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, tile.texture);
 
-    if (parentTile) {
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, parentTile.texture);
+    gl.activeTexture(gl.TEXTURE1);
 
+    if (parentTile) {
+        gl.bindTexture(gl.TEXTURE_2D, parentTile.texture);
         parentScaleBy = Math.pow(2, parentTile.coord.z - tile.coord.z);
         parentTL = [tile.coord.x * parentScaleBy % 1, tile.coord.y * parentScaleBy % 1];
+
     } else {
+        gl.bindTexture(gl.TEXTURE_2D, tile.texture);
         opacities[1] = 0;
     }
 
     // cross-fade parameters
-    gl.uniform2fv(shader.u_tl_parent, parentTL || [0, 0]);
-    gl.uniform1f(shader.u_scale_parent, parentScaleBy || 1);
-    gl.uniform1f(shader.u_buffer_scale, 1);
-    gl.uniform1f(shader.u_opacity0, opacities[0]);
-    gl.uniform1f(shader.u_opacity1, opacities[1]);
-    gl.uniform1i(shader.u_image0, 0);
-    gl.uniform1i(shader.u_image1, 1);
+    gl.uniform2fv(program.u_tl_parent, parentTL || [0, 0]);
+    gl.uniform1f(program.u_scale_parent, parentScaleBy || 1);
+    gl.uniform1f(program.u_buffer_scale, 1);
+    gl.uniform1f(program.u_opacity0, opacities[0]);
+    gl.uniform1f(program.u_opacity1, opacities[1]);
+    gl.uniform1i(program.u_image0, 0);
+    gl.uniform1i(program.u_image1, 1);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, tile.boundsBuffer || painter.tileExtentBuffer);
-
-    gl.vertexAttribPointer(shader.a_pos,         2, gl.SHORT, false, 8, 0);
-    gl.vertexAttribPointer(shader.a_texture_pos, 2, gl.SHORT, false, 8, 4);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-    gl.enable(gl.STENCIL_TEST);
+    var buffer = tile.boundsBuffer || painter.rasterBoundsBuffer;
+    var vao = tile.boundsVAO || painter.rasterBoundsVAO;
+    vao.bind(gl, program, buffer);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, buffer.length);
 }
 
 function spinWeights(angle) {
